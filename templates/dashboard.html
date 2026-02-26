@@ -1,0 +1,207 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="dashboard-container">
+    <header class="dashboard-header">
+        <h2>📊 Modbus Stream Dashboard</h2>
+        <p class="dashboard-subtitle">Real-time tri-axial accelerometer monitoring and control</p>
+    </header>
+    
+    <div class="dashboard-grid">
+        <div class="dashboard-card">
+            <div class="card-header">
+                <h3>⚙️ Configuration</h3>
+            </div>
+            <div class="card-content">
+                <p>Configure sensor settings, connection parameters, and streaming options.</p>
+                <a href="/settings" class="btn btn-primary">Open Settings</a>
+            </div>
+        </div>
+        
+        <div class="dashboard-card">
+            <div class="card-header">
+                <h3>📈 Live Data</h3>
+            </div>
+            <div class="card-content">
+                <p>View real-time sensor readings, metrics, and streaming data.</p>
+                <div class="card-actions">
+                    <a href="/read/latest-raw" class="btn btn-info">Latest Raw</a>
+                    <a href="/read/all-metrics" class="btn btn-info">All Metrics</a>
+                </div>
+            </div>
+        </div>
+        
+        <div class="dashboard-card">
+            <div class="card-header">
+                <h3>🌐 WebSocket Streams</h3>
+            </div>
+            <div class="card-content">
+                <p>Connect to real-time data streams for continuous monitoring.</p>
+                <div class="card-actions">
+                    <button class="btn btn-info" onclick="connectRawStream()">Raw Data Stream</button>
+                    <button class="btn btn-info" onclick="connectMetricsStream()">Metrics Stream</button>
+                </div>
+            </div>
+        </div>
+        
+        <div class="dashboard-card">
+            <div class="card-header">
+                <h3>🔧 System</h3>
+            </div>
+            <div class="card-content">
+                <p>System health, diagnostics, and API status information.</p>
+                <div class="card-actions">
+                    <a href="/health" class="btn btn-info">Health Check</a>
+                    <a href="/diagnostics" class="btn btn-info">Diagnostics</a>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="quick-status" hx-get="/settings/status" hx-trigger="every 10s">
+        <div class="status-item">
+            <span class="status-label">Connection:</span>
+            <span class="status-value">Loading...</span>
+        </div>
+    </div>
+</div>
+
+<style>
+.dashboard-container {
+    padding: 2rem 0;
+}
+
+.dashboard-header {
+    text-align: center;
+    margin-bottom: 3rem;
+}
+
+.dashboard-header h2 {
+    font-size: 2.5rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 0.5rem;
+}
+
+.dashboard-subtitle {
+    color: var(--text-secondary);
+    font-size: 1.125rem;
+}
+
+.dashboard-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 2rem;
+    margin-bottom: 3rem;
+}
+
+.dashboard-card {
+    background: var(--background-white);
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius);
+    overflow: hidden;
+    box-shadow: var(--shadow-sm);
+    transition: var(--transition);
+}
+
+.dashboard-card:hover {
+    box-shadow: var(--shadow-md);
+    transform: translateY(-2px);
+}
+
+.card-header {
+    padding: 1.5rem;
+    border-bottom: 1px solid var(--border-color);
+    background: var(--background-light);
+}
+
+.card-header h3 {
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.card-content {
+    padding: 1.5rem;
+}
+
+.card-content p {
+    color: var(--text-secondary);
+    margin-bottom: 1rem;
+}
+
+.card-actions {
+    display: flex;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+}
+
+.quick-status {
+    background: var(--background-white);
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius);
+    padding: 1rem;
+    text-align: center;
+}
+
+.status-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.status-label {
+    font-weight: 500;
+    color: var(--text-secondary);
+}
+
+.status-value {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+</style>
+
+<script>
+function connectRawStream() {
+    // Simple WebSocket connection demo
+    if (window.rawSocket) {
+        window.rawSocket.close();
+    }
+    
+    window.rawSocket = new WebSocket(`ws://${window.location.host}/stream/raw`);
+    
+    window.rawSocket.onopen = function() {
+        alert('Connected to raw data stream!');
+    };
+    
+    window.rawSocket.onmessage = function(event) {
+        console.log('Raw data:', JSON.parse(event.data));
+    };
+    
+    window.rawSocket.onerror = function(error) {
+        alert('WebSocket error: ' + error);
+    };
+}
+
+function connectMetricsStream() {
+    // Simple WebSocket connection demo
+    if (window.metricsSocket) {
+        window.metricsSocket.close();
+    }
+    
+    window.metricsSocket = new WebSocket(`ws://${window.location.host}/stream/metrics`);
+    
+    window.metricsSocket.onopen = function() {
+        alert('Connected to metrics stream!');
+    };
+    
+    window.metricsSocket.onmessage = function(event) {
+        console.log('Metrics:', JSON.parse(event.data));
+    };
+    
+    window.metricsSocket.onerror = function(error) {
+        alert('WebSocket error: ' + error);
+    };
+}
+</script>
+{% endblock %}

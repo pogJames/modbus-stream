@@ -1,0 +1,267 @@
+<form hx-post="{{ url_for('apply_settings') }}" 
+      hx-target="#feedback-area" 
+      hx-swap="innerHTML"
+      hx-indicator="#loading-spinner"
+      class="settings-form">
+      
+    <fieldset class="connection-settings">
+        <legend>📡 Connection Configuration</legend>
+        
+        <div class="form-group">
+            <label for="device_path">Device Path</label>
+            <select id="device_path" 
+                    name="device_path"
+                    hx-get="{{ url_for('get_ports') }}"
+                    hx-trigger="focus once"
+                    hx-target="this"
+                    hx-swap="innerHTML">
+                <option value="{{ settings.device_path }}">{{ settings.device_path }}</option>
+                <option value="auto">🔍 Auto-detect</option>
+                <option value="custom">✏️ Enter manually...</option>
+            </select>
+            <input type="text" 
+                   id="custom_device" 
+                   name="custom_device_path" 
+                   placeholder="/dev/ttyUSB0 or COM3"
+                   style="display: none;"
+                   class="custom-device-input">
+            <small class="help-text">Serial port path for the Modbus device</small>
+        </div>
+        
+        <div class="form-group">
+            <label>Baud Rate</label>
+            <div class="radio-group">
+                <label class="radio-label">
+                    <input type="radio" 
+                           name="baud_rate" 
+                           value="115200" 
+                           {% if settings.baud_rate == 115200 %}checked{% endif %}
+                           hx-post="{{ url_for('validate_settings') }}"
+                           hx-trigger="change"
+                           hx-include="[name='sample_rate']"
+                           hx-target="#baud-rate-warning"
+                           hx-swap="innerHTML">
+                    <span>115,200 bps</span>
+                    <small>Periodic monitoring only</small>
+                </label>
+                <label class="radio-label">
+                    <input type="radio" 
+                           name="baud_rate" 
+                           value="3000000"
+                           {% if settings.baud_rate == 3000000 %}checked{% endif %}
+                           hx-post="{{ url_for('validate_settings') }}"
+                           hx-trigger="change"
+                           hx-include="[name='sample_rate']"
+                           hx-target="#baud-rate-warning"
+                           hx-swap="innerHTML">
+                    <span>3 Mbps</span>
+                    <small>Full streaming support</small>
+                </label>
+            </div>
+            <div id="baud-rate-warning" class="warning-text">
+                ⚠️ Changing baud rate requires sensor power cycle
+            </div>
+        </div>
+        
+        <div class="form-row">
+            <div class="form-group">
+                <label for="slave_id">Slave ID</label>
+                <input type="number" 
+                       id="slave_id" 
+                       name="slave_id" 
+                       value="{{ settings.slave_id }}"
+                       min="1" max="247" required>
+                <small class="help-text">Modbus slave ID (1-247)</small>
+            </div>
+            
+            <div class="form-group">
+                <label for="timeout_ms">Timeout (ms)</label>
+                <input type="number" 
+                       id="timeout_ms" 
+                       name="timeout_ms" 
+                       value="{{ settings.timeout_ms }}"
+                       min="1000" max="30000" step="100" required>
+                <small class="help-text">Communication timeout</small>
+            </div>
+            
+            <div class="form-group">
+                <label for="retry_attempts">Retry Attempts</label>
+                <input type="number" 
+                       id="retry_attempts" 
+                       name="retry_attempts" 
+                       value="{{ settings.retry_attempts }}"
+                       min="1" max="10" required>
+                <small class="help-text">Number of retry attempts</small>
+            </div>
+        </div>
+    </fieldset>
+    
+    <fieldset class="sensor-settings">
+        <legend>⚡ Sensor Configuration</legend>
+        
+        <div class="form-group">
+            <label for="sample_rate">Sample Rate (sps)</label>
+            <div class="sample-rate-container">
+                <input type="number" 
+                       id="sample_rate" 
+                       name="sample_rate" 
+                       value="{{ settings.sample_rate }}"
+                       min="1" max="10000" required
+                       hx-post="{{ url_for('validate_settings') }}"
+                       hx-trigger="change delay:500ms"
+                       hx-include="[name='baud_rate']:checked"
+                       hx-target="#sample-rate-warning"
+                       hx-swap="innerHTML">
+                <div class="preset-buttons">
+                    <button type="button" class="preset-btn" data-value="800">800</button>
+                    <button type="button" class="preset-btn" data-value="1600">1600</button>
+                    <button type="button" class="preset-btn" data-value="6400">6400</button>
+                    <button type="button" class="preset-btn" data-value="7812">7812</button>
+                </div>
+            </div>
+            <small class="help-text">Common values: 1600 (balanced), 6400 (K-type), 7812 (I-type)</small>
+            <div id="sample-rate-warning"></div>
+        </div>
+        
+        <div class="form-row">
+            <div class="form-group">
+                <label for="stream_size">Stream Size (registers)</label>
+                <input type="number" 
+                       id="stream_size" 
+                       name="stream_size" 
+                       value="{{ settings.stream_size }}"
+                       min="1" max="123" required>
+                <small class="help-text">Bulk transfer size (1-123, preferably divisible by 3)</small>
+            </div>
+            
+            <div class="form-group">
+                <label class="checkbox-label">
+                    <input type="checkbox" 
+                           name="high_pass_filter" 
+                           {% if settings.high_pass_filter %}checked{% endif %}>
+                    <span>Enable High Pass Filter</span>
+                </label>
+                <small class="help-text">Bandwidth: 3-2.5 kHz @ 7812 sps (2 kHz for K-type)</small>
+            </div>
+        </div>
+    </fieldset>
+    
+    <fieldset class="streaming-settings">
+        <legend>📊 Streaming Configuration</legend>
+        
+        <div class="form-row">
+            <div class="form-group">
+                <label for="max_connections">Max WebSocket Connections</label>
+                <input type="number" 
+                       id="max_connections" 
+                       name="max_connections" 
+                       value="{{ settings.max_connections }}"
+                       min="1" max="50" required>
+                <small class="help-text">Concurrent WebSocket clients</small>
+            </div>
+            
+            <div class="form-group">
+                <label for="buffer_size">Buffer Size (bytes)</label>
+                <input type="number" 
+                       id="buffer_size" 
+                       name="buffer_size" 
+                       value="{{ settings.buffer_size }}"
+                       min="256" max="8192" step="256" required>
+                <small class="help-text">WebSocket message buffer</small>
+            </div>
+        </div>
+        
+        <div class="form-row">
+            <div class="form-group">
+                <label for="metrics_update_rate_hz">Metrics Update Rate (Hz)</label>
+                <input type="number" 
+                       id="metrics_update_rate_hz" 
+                       name="metrics_update_rate_hz" 
+                       value="{{ settings.metrics_update_rate_hz }}"
+                       min="0.1" max="5.0" step="0.1" required>
+                <small class="help-text">Max: 5 Hz (sensor limitation)</small>
+            </div>
+            
+            <div class="form-group">
+                <label for="websocket_ping_interval_sec">WebSocket Ping Interval (sec)</label>
+                <input type="number" 
+                       id="websocket_ping_interval_sec" 
+                       name="websocket_ping_interval_sec" 
+                       value="{{ settings.websocket_ping_interval_sec }}"
+                       min="10" max="300" step="5" required>
+                <small class="help-text">Keep-alive ping frequency</small>
+            </div>
+        </div>
+    </fieldset>
+    
+    <div class="form-actions">
+        <button type="button" 
+                hx-post="{{ url_for('test_connection') }}"
+                hx-include="[name]"
+                hx-target="#test-result"
+                hx-indicator="#test-spinner"
+                class="btn btn-info">
+            <span id="test-spinner" class="htmx-indicator">⏳</span>
+            🔧 Test Connection
+        </button>
+        
+        <button type="submit" class="btn btn-primary">
+            <span id="loading-spinner" class="htmx-indicator">⏳</span>
+            ✅ Apply Settings
+        </button>
+        
+        <button type="button"
+                hx-post="{{ url_for('reset_settings') }}"
+                hx-target="#feedback-area"
+                hx-confirm="Reset all settings to defaults? This will reload the configuration file."
+                class="btn btn-secondary">
+            🔄 Reset to Defaults
+        </button>
+    </div>
+    
+    <div id="test-result" class="test-result"></div>
+</form>
+
+<script>
+// Minimal JavaScript for enhanced UX
+document.addEventListener('DOMContentLoaded', function() {
+    // Preset button handlers
+    document.querySelectorAll('.preset-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            const sampleRateInput = document.getElementById('sample_rate');
+            sampleRateInput.value = this.dataset.value;
+            
+            // Remove active class from all buttons
+            document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
+            // Add active class to clicked button
+            this.classList.add('active');
+            
+            // Trigger validation
+            sampleRateInput.dispatchEvent(new Event('change'));
+        });
+    });
+    
+    // Custom device path toggle
+    document.getElementById('device_path').addEventListener('change', function() {
+        const customInput = document.getElementById('custom_device');
+        if (this.value === 'custom') {
+            customInput.style.display = 'block';
+            customInput.name = 'device_path';
+            this.name = '';
+            customInput.focus();
+        } else {
+            customInput.style.display = 'none';
+            customInput.name = 'custom_device_path';
+            this.name = 'device_path';
+        }
+    });
+    
+    // Mark active preset button on load
+    const currentSampleRate = document.getElementById('sample_rate').value;
+    document.querySelectorAll('.preset-btn').forEach(btn => {
+        if (btn.dataset.value === currentSampleRate) {
+            btn.classList.add('active');
+        }
+    });
+});
+</script>

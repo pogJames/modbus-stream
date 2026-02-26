@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="settings-container">
+    <header class="settings-header">
+        <h2>⚙️ Sensor Configuration</h2>
+        <div id="status-header" hx-get="{{ url_for('get_status') }}" hx-trigger="every 5s">
+            {% include "settings/status-header.html" %}
+        </div>
+    </header>
+    
+    <main class="settings-main">
+        <div id="settings-form">
+            {% include "settings/form.html" %}
+        </div>
+    </main>
+    
+    <div id="feedback-area" class="feedback-area">
+        {% if feedback %}
+            {% include "settings/feedback.html" %}
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

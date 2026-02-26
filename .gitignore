@@ -1,0 +1,55 @@
+# Rust
+/target/
+Cargo.lock
+
+# Configuration
+config.toml
+
+# Logs
+*.log
+logs/
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Backup files
+*.bak
+*.tmp
+
+# Build artifacts
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test results
+test-results/
+
+# Coverage reports
+coverage/
+*.gcov
+*.lcov
+
+# Local development
+.env
+.env.local
+
+# Docker
+.dockerignore
+
+# Monitoring data
+monitoring/data/
+grafana-data/

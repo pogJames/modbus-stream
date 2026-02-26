@@ -1,0 +1,34 @@
+{% if feedback %}
+<div class="feedback {{ feedback.feedback_type }}">
+    <div class="feedback-icon">
+        {% if feedback.feedback_type == "success" %}✅
+        {% elif feedback.feedback_type == "error" %}❌
+        {% elif feedback.feedback_type == "warning" %}⚠️
+        {% else %}ℹ️{% endif %}
+    </div>
+    <div class="feedback-content">
+        {% if feedback.title %}
+        <h4>{{ feedback.title }}</h4>
+        {% endif %}
+        <p>{{ feedback.message }}</p>
+        
+        {% if feedback.details %}
+        <div class="feedback-details">
+            {% for detail in feedback.details %}
+            <div>{{ detail }}</div>
+            {% endfor %}
+        </div>
+        {% endif %}
+        
+        {% if feedback.field_errors %}
+        <div class="field-errors">
+            {% for field, errors in feedback.field_errors %}
+            <div class="field-error">
+                <strong>{{ field | title }}:</strong> {{ errors | join(", ") }}
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
