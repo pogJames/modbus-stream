@@ -3,7 +3,6 @@ use axum::{
     response::{IntoResponse, Json},
 };
 use serde_json::json;
-use tracing::error;
 
 use crate::AppState;
 
@@ -121,19 +120,13 @@ pub async fn get_diagnostics(State(state): State<AppState>) -> impl IntoResponse
                 "connected": false,
                 "error": "Modbus device not connected"
             });
-        } else if let Some(client) = &*client_guard {
-            // Connection failed - get the actual error for better diagnostics
-            match client.test_connection().await {
-                Ok(()) => unreachable!(), // We already know it failed
-                Err(e) => {
-                    error!("Failed to test connection: {}", e);
-                    diagnostics["connection"] = json!({
-                        "status": "error",
-                        "connected": false,
-                        "error": e.to_string()
-                    });
-                }
-            }
+        } else {
+            // Client exists but connection test failed
+            diagnostics["connection"] = json!({
+                "status": "error",
+                "connected": false,
+                "error": "Connection test failed"
+            });
         }
     }
 

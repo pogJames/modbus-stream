@@ -16,6 +16,7 @@ pub struct ModbusClient {
     slave_id: u8,
     device_path: String,
     baud_rate: u32,
+    scale_factor: Mutex<Option<f64>>,
 }
 
 impl ModbusClient {
@@ -42,6 +43,7 @@ impl ModbusClient {
             slave_id,
             device_path: device_path.to_string(),
             baud_rate,
+            scale_factor: Mutex::new(None),
         })
     }
 
@@ -166,15 +168,50 @@ impl ModbusClient {
         let data = self.read_holding_registers(registers::UCID, 2)
             .await
             .with_context(|| "Failed to read UCID registers")?;
-        
+
         if data.len() != 2 {
             anyhow::bail!("Expected 2 UCID registers, got {}", data.len());
         }
-        
+
         let raw_value = ((data[0] as u32) << 16) | (data[1] as u32);
         let ucid = UcidInfo::from_raw(raw_value);
         debug!("UCID: {:?}", ucid);
         Ok(ucid)
+    }
+
+    /// Get the scale factor for converting raw values to g's, reading UCID if not cached
+    pub async fn get_scale_factor(&self) -> f64 {
+        // Check cache first
+        let cached = self.scale_factor.lock().await;
+        if let Some(factor) = *cached {
+            return factor;
+        }
+        drop(cached);
+
+        // Read UCID and calculate scale factor
+        let factor = match self.read_ucid().await {
+            Ok(ucid) => {
+                let factor = ucid.scale_factor();
+                debug!("Determined scale factor {} from gain {}", factor, ucid.gain);
+                factor
+            }
+            Err(e) => {
+                warn!("Failed to read UCID for scale factor, using default 4G: {}", e);
+                1.0 / 4096.0 // Default to 4G
+            }
+        };
+
+        // Cache the result
+        let mut cached = self.scale_factor.lock().await;
+        *cached = Some(factor);
+        factor
+    }
+
+    /// Clear the cached scale factor (call when sensor is reconfigured)
+    pub async fn clear_scale_factor_cache(&self) {
+        let mut cached = self.scale_factor.lock().await;
+        *cached = None;
+        debug!("Scale factor cache cleared");
     }
 
     /// Read firmware version
@@ -220,11 +257,9 @@ impl ModbusClient {
             .read_input_registers(registers::RAW_DATA_LATEST_X, 3)
             .await?;
 
-        // Convert raw 16-bit values to acceleration in g
-        // Note: Conversion factor depends on sensor configuration and gain
-        // TODO: This should be determined dynamically based on UCID gain setting
-        let scale_factor = 1.0 / 4096.0; // Example for 4G range, adjust based on sensor gain
-        
+        // Get scale factor based on sensor gain setting (cached after first read)
+        let scale_factor = self.get_scale_factor().await;
+
         let x = (data[0] as i16) as f64 * scale_factor;
         let y = (data[1] as i16) as f64 * scale_factor;
         let z = (data[2] as i16) as f64 * scale_factor;
@@ -454,7 +489,7 @@ impl ModbusClient {
         // Convert raw data to acceleration values
         // Each triplet represents X, Y, Z
         let mut result = Vec::new();
-        let scale_factor = 1.0 / 4096.0; // TODO: Should be configurable based on sensor gain from UCID
+        let scale_factor = self.get_scale_factor().await;
 
         for chunk in data.chunks_exact(3) {
             let x = (chunk[0] as i16) as f64 * scale_factor;

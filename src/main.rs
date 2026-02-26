@@ -53,6 +53,7 @@ struct Args {
 pub struct AppState {
     modbus_client: Arc<tokio::sync::RwLock<Option<ModbusClient>>>,
     config: Arc<AppConfig>,
+    config_path: String,
     template_env: Arc<AutoReloader>,
 }
 
@@ -109,6 +110,7 @@ async fn main() -> Result<()> {
     let state = AppState {
         modbus_client: Arc::new(tokio::sync::RwLock::new(modbus_client)),
         config: Arc::new(config),
+        config_path: args.config.clone(),
         template_env,
     };
 

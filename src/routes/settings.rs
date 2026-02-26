@@ -11,6 +11,7 @@ use tracing::{error, info, warn};
 
 use crate::{
     config::AppConfig,
+    modbus::ModbusClient,
     types::{Feedback, SettingsForm, SettingsStatus, ValidationErrors},
     AppState,
 };
@@ -199,26 +200,88 @@ pub async fn validate_field_handler(
     State(_state): State<AppState>,
     Form(form_data): Form<HashMap<String, String>>,
 ) -> impl IntoResponse {
-    // For now, return a simple validation response
-    // In a full implementation, this would validate specific fields
-    let field_name = form_data.keys().next().unwrap_or(&"unknown".to_string());
-    
-    // Example validation logic
-    if let Some(sample_rate_str) = form_data.get("sample_rate") {
-        if let Some(baud_rate_str) = form_data.get("baud_rate") {
-            if let (Ok(sample_rate), Ok(baud_rate)) = (
-                sample_rate_str.parse::<u16>(),
-                baud_rate_str.parse::<u32>()
-            ) {
-                if sample_rate > 1000 && baud_rate != 3000000 {
-                    return Html(
-                        "<div class=\"validation-warning\">⚠️ High sample rates (>1000 sps) require 3 Mbps baud rate</div>".to_string()
-                    );
+    // Validate individual fields
+    for (field_name, value) in &form_data {
+        let validation_result = match field_name.as_str() {
+            "device_path" => {
+                if value.trim().is_empty() {
+                    Some("Device path cannot be empty")
+                } else if !value.starts_with("/dev/") && !value.starts_with("COM") {
+                    Some("Device path should start with /dev/ (Linux/macOS) or COM (Windows)")
+                } else {
+                    None
                 }
+            }
+            "baud_rate" => {
+                match value.parse::<u32>() {
+                    Ok(rate) if rate == 115200 || rate == 3000000 => None,
+                    Ok(_) => Some("Baud rate must be 115200 or 3000000 bps"),
+                    Err(_) => Some("Invalid baud rate value"),
+                }
+            }
+            "slave_id" => {
+                match value.parse::<u8>() {
+                    Ok(id) if id >= 1 && id <= 247 => None,
+                    Ok(_) => Some("Slave ID must be between 1 and 247"),
+                    Err(_) => Some("Invalid slave ID value"),
+                }
+            }
+            "sample_rate" => {
+                match value.parse::<u16>() {
+                    Ok(rate) if rate >= 1 && rate <= 10000 => None,
+                    Ok(_) => Some("Sample rate must be between 1 and 10000 sps"),
+                    Err(_) => Some("Invalid sample rate value"),
+                }
+            }
+            "stream_size" => {
+                match value.parse::<u16>() {
+                    Ok(size) if size >= 1 && size <= 123 => None,
+                    Ok(_) => Some("Stream size must be between 1 and 123 registers"),
+                    Err(_) => Some("Invalid stream size value"),
+                }
+            }
+            "timeout_ms" => {
+                match value.parse::<u64>() {
+                    Ok(ms) if ms >= 1000 && ms <= 30000 => None,
+                    Ok(_) => Some("Timeout must be between 1000 and 30000 ms"),
+                    Err(_) => Some("Invalid timeout value"),
+                }
+            }
+            "metrics_update_rate_hz" => {
+                match value.parse::<f64>() {
+                    Ok(rate) if rate > 0.0 && rate <= 5.0 => None,
+                    Ok(_) => Some("Metrics update rate must be between 0.1 and 5.0 Hz"),
+                    Err(_) => Some("Invalid metrics update rate value"),
+                }
+            }
+            _ => None,
+        };
+
+        if let Some(error_msg) = validation_result {
+            return Html(format!(
+                "<div class=\"validation-error\">❌ {}</div>",
+                error_msg
+            ));
+        }
+    }
+
+    // Cross-field validation: sample rate vs baud rate
+    if let (Some(sample_rate_str), Some(baud_rate_str)) = (
+        form_data.get("sample_rate"),
+        form_data.get("baud_rate"),
+    ) {
+        if let (Ok(sample_rate), Ok(baud_rate)) = (
+            sample_rate_str.parse::<u16>(),
+            baud_rate_str.parse::<u32>(),
+        ) {
+            if sample_rate > 1000 && baud_rate != 3000000 {
+                return Html(
+                    "<div class=\"validation-warning\">⚠️ High sample rates (>1000 sps) require 3 Mbps baud rate</div>".to_string()
+                );
             }
         }
     }
-    
+
     Html("<div class=\"validation-ok\">✓ Valid</div>".to_string())
 }
 
@@ -398,7 +461,7 @@ fn validate_settings(form: &SettingsForm) -> Result<(), ValidationErrors> {
 
 async fn apply_settings_to_system(state: &AppState, settings: &SettingsForm) -> anyhow::Result<Vec<String>> {
     let mut details = Vec::new();
-    
+
     // Check if client is available
     let client_guard = state.modbus_client.read().await;
     match &*client_guard {
@@ -408,17 +471,17 @@ async fn apply_settings_to_system(state: &AppState, settings: &SettingsForm) -> 
                 return Err(anyhow::anyhow!("Failed to set sample rate: {}", e));
             }
             details.push(format!("Sample rate set to {} sps", settings.sample_rate));
-            
+
             if let Err(e) = client.set_stream_size(settings.stream_size).await {
                 return Err(anyhow::anyhow!("Failed to set stream size: {}", e));
             }
             details.push(format!("Stream size set to {} registers", settings.stream_size));
-            
+
             if let Err(e) = client.set_high_pass_filter(settings.high_pass_filter).await {
                 return Err(anyhow::anyhow!("Failed to set high pass filter: {}", e));
             }
             details.push(format!("High pass filter: {}", if settings.high_pass_filter { "enabled" } else { "disabled" }));
-            
+
             // Handle baud rate change (requires special handling)
             if settings.baud_rate != state.config.modbus.baud_rate {
                 if let Err(e) = client.set_baud_rate(settings.baud_rate).await {
@@ -426,43 +489,112 @@ async fn apply_settings_to_system(state: &AppState, settings: &SettingsForm) -> 
                 }
                 details.push(format!("Baud rate set to {} bps (requires power cycle)", settings.baud_rate));
             }
+
+            // Clear scale factor cache since sensor may have been reconfigured
+            client.clear_scale_factor_cache().await;
         }
         None => {
             return Err(anyhow::anyhow!("Modbus device not connected"));
         }
     }
-    
-    // Update configuration file
-    // Note: In a real implementation, you would update and save the config file here
-    details.push("Configuration saved to file".to_string());
-    
+
+    // Update configuration file with new settings
+    let new_config = AppConfig {
+        server: state.config.server.clone(),
+        modbus: crate::config::ModbusConfig {
+            device: settings.device_path.clone(),
+            baud_rate: settings.baud_rate,
+            slave_id: settings.slave_id,
+            timeout_ms: settings.timeout_ms,
+            retry_attempts: settings.retry_attempts,
+        },
+        streaming: crate::config::StreamingConfig {
+            max_connections: settings.max_connections,
+            buffer_size: settings.buffer_size,
+            metrics_update_rate_hz: settings.metrics_update_rate_hz,
+            raw_data_max_samples: state.config.streaming.raw_data_max_samples,
+            websocket_ping_interval_sec: settings.websocket_ping_interval_sec,
+        },
+        logging: state.config.logging.clone(),
+    };
+
+    if let Err(e) = new_config.save(&state.config_path) {
+        warn!("Failed to save configuration file: {}", e);
+        details.push(format!("Warning: Could not save config file: {}", e));
+    } else {
+        details.push("Configuration saved to file".to_string());
+    }
+
     info!("Settings applied successfully: {:?}", details);
     Ok(details)
 }
 
-async fn test_connection_with_settings(state: &AppState, _settings: &SettingsForm) -> anyhow::Result<String> {
-    // For now, just test the current connection
-    // In a full implementation, you might create a temporary connection with the new settings
-    let client_guard = state.modbus_client.read().await;
-    match &*client_guard {
-        Some(client) => {
-            match client.test_connection().await {
-                Ok(()) => {
-                    let temp = client.read_temperature().await?;
-                    Ok(format!("Connection successful, temperature: {:.1}°C", temp))
+async fn test_connection_with_settings(state: &AppState, settings: &SettingsForm) -> anyhow::Result<String> {
+    // Check if settings differ from current configuration
+    let settings_differ = settings.device_path != state.config.modbus.device
+        || settings.baud_rate != state.config.modbus.baud_rate
+        || settings.slave_id != state.config.modbus.slave_id;
+
+    if settings_differ {
+        // Create a temporary connection with the new settings
+        info!("Testing connection with new settings: {} @ {} bps, slave {}",
+              settings.device_path, settings.baud_rate, settings.slave_id);
+
+        match ModbusClient::new(&settings.device_path, settings.baud_rate, settings.slave_id).await {
+            Ok(temp_client) => {
+                match temp_client.test_connection().await {
+                    Ok(()) => {
+                        let temp = temp_client.read_temperature().await?;
+                        Ok(format!("Connection successful with new settings, temperature: {:.1}°C", temp))
+                    }
+                    Err(e) => Err(anyhow::anyhow!("Connection test failed with new settings: {}", e)),
                 }
-                Err(e) => Err(anyhow::anyhow!("Connection error: {}", e)),
+                // temp_client is dropped here, closing the temporary connection
             }
+            Err(e) => Err(anyhow::anyhow!("Failed to connect with new settings: {}", e)),
         }
-        None => Err(anyhow::anyhow!("Modbus device not connected")),
+    } else {
+        // Test the existing connection
+        let client_guard = state.modbus_client.read().await;
+        match &*client_guard {
+            Some(client) => {
+                match client.test_connection().await {
+                    Ok(()) => {
+                        let temp = client.read_temperature().await?;
+                        Ok(format!("Connection successful, temperature: {:.1}°C", temp))
+                    }
+                    Err(e) => Err(anyhow::anyhow!("Connection error: {}", e)),
+                }
+            }
+            None => Err(anyhow::anyhow!("Modbus device not connected")),
+        }
     }
 }
 
-async fn reset_to_default_settings(_state: &AppState) -> anyhow::Result<()> {
-    // In a real implementation, you would:
-    // 1. Reset config file to defaults
-    // 2. Reconnect to sensor with default settings
-    // 3. Reset sensor to default configuration
+async fn reset_to_default_settings(state: &AppState) -> anyhow::Result<()> {
+    // Create and save default configuration
+    let default_config = AppConfig::default();
+    default_config.save(&state.config_path)?;
+    info!("Configuration file reset to defaults");
+
+    // Reset sensor settings via Modbus if connected
+    let client_guard = state.modbus_client.read().await;
+    if let Some(client) = &*client_guard {
+        // Reset to default sensor settings
+        if let Err(e) = client.set_sample_rate(7812).await {
+            warn!("Failed to reset sample rate: {}", e);
+        }
+        if let Err(e) = client.set_stream_size(123).await {
+            warn!("Failed to reset stream size: {}", e);
+        }
+        if let Err(e) = client.set_high_pass_filter(false).await {
+            warn!("Failed to reset high pass filter: {}", e);
+        }
+        // Clear scale factor cache
+        client.clear_scale_factor_cache().await;
+        info!("Sensor settings reset to defaults");
+    }
+
     info!("Settings reset to defaults");
     Ok(())
 }
@@ -532,23 +664,45 @@ fn render_feedback_error(title: &str, message: &str, errors: Option<ValidationEr
 /// Get available serial ports
 fn get_serial_ports() -> anyhow::Result<Vec<SerialPortInfo>> {
     let mut ports = Vec::new();
-    
+
     // For cross-platform compatibility, we'll do a simple check
     // In a real implementation, you might use the serialport crate
-    
+
     #[cfg(target_os = "windows")]
     {
-        // Windows COM ports
+        // Windows COM ports - check if they actually exist by trying to query them
+        use std::fs::OpenOptions;
+
         for i in 1..=20 {
             let port_name = format!("COM{}", i);
-            // In a real implementation, you'd check if the port actually exists
-            ports.push(SerialPortInfo {
-                port_name: port_name.clone(),
-                port_type: "Serial".to_string(),
-            });
+            // Use the Windows device path format for checking
+            let device_path = format!("\\\\.\\{}", port_name);
+
+            // Try to open the port briefly to check if it exists
+            // This is a non-blocking check that just verifies the port is available
+            match OpenOptions::new().read(true).write(true).open(&device_path) {
+                Ok(_) => {
+                    ports.push(SerialPortInfo {
+                        port_name: port_name.clone(),
+                        port_type: "Serial".to_string(),
+                    });
+                }
+                Err(e) => {
+                    // ERROR_FILE_NOT_FOUND (2) or ERROR_ACCESS_DENIED (5) means port exists but may be in use
+                    let raw_error = e.raw_os_error().unwrap_or(0);
+                    if raw_error == 5 {
+                        // Access denied - port exists but is in use
+                        ports.push(SerialPortInfo {
+                            port_name: port_name.clone(),
+                            port_type: "Serial (in use)".to_string(),
+                        });
+                    }
+                    // ERROR_FILE_NOT_FOUND means port doesn't exist, skip it
+                }
+            }
         }
     }
-    
+
     #[cfg(target_os = "linux")]
     {
         // Linux USB serial devices
@@ -556,7 +710,7 @@ fn get_serial_ports() -> anyhow::Result<Vec<SerialPortInfo>> {
             "/dev/ttyUSB0", "/dev/ttyUSB1", "/dev/ttyUSB2", "/dev/ttyUSB3",
             "/dev/ttyACM0", "/dev/ttyACM1", "/dev/ttyACM2", "/dev/ttyACM3",
         ];
-        
+
         for path in &common_paths {
             if std::path::Path::new(path).exists() {
                 ports.push(SerialPortInfo {
@@ -566,7 +720,7 @@ fn get_serial_ports() -> anyhow::Result<Vec<SerialPortInfo>> {
             }
         }
     }
-    
+
     #[cfg(target_os = "macos")]
     {
         // macOS USB serial devices
@@ -582,6 +736,6 @@ fn get_serial_ports() -> anyhow::Result<Vec<SerialPortInfo>> {
             }
         }
     }
-    
+
     Ok(ports)
 }

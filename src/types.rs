@@ -363,4 +363,17 @@ impl UcidInfo {
             raw_value,
         }
     }
+
+    /// Get the scale factor for converting raw sensor values to g's based on gain setting
+    pub fn scale_factor(&self) -> f64 {
+        match self.gain.as_str() {
+            "2G" => 1.0 / 8192.0,
+            "4G" => 1.0 / 4096.0,
+            "8G" => 1.0 / 2048.0,
+            "16G" => 1.0 / 1024.0,
+            "32G" => 1.0 / 512.0,
+            "64G" => 1.0 / 256.0,
+            _ => 1.0 / 4096.0, // Default to 4G scale factor
+        }
+    }
 }
