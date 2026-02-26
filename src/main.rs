@@ -10,8 +10,9 @@ use clap::Parser;
 use minijinja::{context, Environment};
 use minijinja_autoreload::AutoReloader;
 use serde::{Deserialize, Serialize};
-use std::{net::SocketAddr, sync::Arc};
+use std::{net::SocketAddr, path::Path, sync::Arc};
 use tokio::net::TcpListener;
+use tokio::time::Instant;
 use tower_http::{cors::CorsLayer, services::ServeDir};
 use tracing::{info, warn};
 
@@ -57,6 +58,118 @@ pub struct AppState {
     template_env: Arc<AutoReloader>,
 }
 
+/// Runs pre-startup device diagnostics and returns a ModbusClient if connection succeeds.
+/// Prints a clear step-by-step report to stdout before the server starts.
+async fn run_startup_diagnostics(
+    device_path: &str,
+    baud_rate: u32,
+    slave_id: u8,
+    timeout_ms: u64,
+) -> Option<ModbusClient> {
+    let border = "═".repeat(60);
+    println!("\n{}", border);
+    println!("  Modbus Device Startup Diagnostics");
+    println!("{}", border);
+    println!("  Device:    {}", device_path);
+    println!("  Baud rate: {} bps", baud_rate);
+    println!("  Slave ID:  {}", slave_id);
+    println!("  Timeout:   {} ms", timeout_ms);
+    println!();
+
+    // Step 1: Check device path exists
+    print!("  [1/4] Checking device path ...        ");
+    if !Path::new(device_path).exists() {
+        println!("FAIL");
+        println!("         ✗ {} not found", device_path);
+        println!("         → Check USB is connected:  ls /dev/ttyUSB* /dev/ttyACM*");
+        println!("         → If using WSL/usbipd:     usbipd attach --wsl --busid <id>");
+        println!("         → Then check which port:   dmesg | grep tty | tail -5");
+        println!("\n  Result: NOT CONNECTED — server starting in offline mode");
+        println!("{}\n", border);
+        return None;
+    }
+    println!("OK");
+
+    // Step 2: Check read/write permissions
+    print!("  [2/4] Checking permissions ...        ");
+    match std::fs::OpenOptions::new().read(true).write(true).open(device_path) {
+        Ok(_) => println!("OK (read + write)"),
+        Err(e) => {
+            println!("FAIL");
+            println!("         ✗ Cannot open {}: {}", device_path, e);
+            println!("         → Add yourself to dialout group:");
+            println!("             sudo usermod -aG dialout $USER");
+            println!("           Then log out and back in (or: newgrp dialout)");
+            println!("         → Or temporarily:  sudo chmod a+rw {}", device_path);
+            println!("\n  Result: PERMISSION DENIED — server starting in offline mode");
+            println!("{}\n", border);
+            return None;
+        }
+    }
+
+    // Step 3: Open serial port
+    print!("  [3/4] Opening serial port ...         ");
+    let t = Instant::now();
+    let client = match ModbusClient::new(device_path, baud_rate, slave_id).await {
+        Ok(c) => {
+            println!("OK ({} ms)", t.elapsed().as_millis());
+            c
+        }
+        Err(e) => {
+            println!("FAIL ({} ms)", t.elapsed().as_millis());
+            println!("         ✗ {}", e);
+            println!("         → Port may be in use by another process");
+            println!("         → Check: fuser {}", device_path);
+            println!("\n  Result: PORT ERROR — server starting in offline mode");
+            println!("{}\n", border);
+            return None;
+        }
+    };
+
+    // Step 4: Test actual Modbus communication
+    print!("  [4/4] Testing Modbus communication ... ");
+    let t = Instant::now();
+    match client.test_connection().await {
+        Ok(()) => {
+            let elapsed = t.elapsed().as_millis();
+            println!("OK ({} ms)", elapsed);
+
+            // Read extra device info to confirm it's the right sensor
+            if let Ok(ucid) = client.read_ucid().await {
+                println!("         Model:    {} | Gain: {}", ucid.model, ucid.gain);
+                println!("         Serial:   {}", ucid.serial_number);
+            }
+            if let Ok(temp) = client.read_temperature().await {
+                println!("         Temp:     {:.1}°C", temp);
+            }
+            if let Ok(fw) = client.read_firmware_version().await {
+                println!("         Firmware: {}", fw);
+            }
+
+            println!("\n  Result: CONNECTED");
+            println!("{}\n", border);
+            Some(client)
+        }
+        Err(e) => {
+            let elapsed = t.elapsed().as_millis();
+            println!("FAIL ({} ms)", elapsed);
+            println!("         ✗ {}", e);
+            if elapsed >= timeout_ms {
+                println!("         → Timed out — device may be powered off or wrong baud rate");
+            } else {
+                println!("         → Device found but not responding to Modbus queries");
+            }
+            println!("         → Verify slave ID {} matches sensor configuration", slave_id);
+            println!("         → Verify baud rate {} bps matches sensor", baud_rate);
+            println!("         → Check sensor is powered and Modbus mode is enabled");
+            println!("\n  Result: NOT RESPONDING — server starting in offline mode");
+            println!("{}\n", border);
+            // Return None: port opened but device not talking; no point holding the port
+            None
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize tracing
@@ -73,7 +186,7 @@ async fn main() -> Result<()> {
     let config = AppConfig::load(&args.config)?;
     info!("Loaded configuration from {}", args.config);
 
-    // Try to initialize Modbus client (don't fail if device not found)
+    // Try to initialize Modbus client with full startup diagnostics
     let device_path = args.device.unwrap_or_else(|| config.modbus.device.clone());
     let baud_rate = if args.baud_rate != 115200 {
         args.baud_rate
@@ -81,17 +194,12 @@ async fn main() -> Result<()> {
         config.modbus.baud_rate
     };
 
-    let modbus_client = ModbusClient::new(&device_path, baud_rate, args.slave_id).await
-        .map_err(|e| {
-            warn!("Device not found: {}. Starting in monitoring mode.", e);
-            e
-        })
-        .ok();
-    
-    match &modbus_client {
-        Some(_) => info!("Connected to Modbus device at {}", device_path),
-        None => warn!("Modbus device not found at {}, starting in monitoring mode", device_path),
-    }
+    let modbus_client = run_startup_diagnostics(
+        &device_path,
+        baud_rate,
+        args.slave_id,
+        config.modbus.timeout_ms,
+    ).await;
 
     // Setup template auto-reloader
     let template_path = "templates";
