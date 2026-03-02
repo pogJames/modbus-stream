@@ -49,6 +49,9 @@
   .range-card.y .range-val { color: #22c55e; }
   .range-card.z .range-val { color: #3b82f6; }
 
+  .range-card { cursor: pointer; user-select: none; transition: opacity 0.15s; }
+  .range-card.hidden-axis { opacity: 0.35; }
+
   .chart-card {
     background: var(--background-white);
     border: 1px solid var(--border-color);
@@ -96,17 +99,17 @@
 
   <!-- Range display -->
   <div class="range-grid">
-    <div class="range-card x">
+    <div class="range-card x" data-axis="x">
       <div class="axis-label">X Axis</div>
       <div class="range-row"><span class="range-label">min</span><span class="range-val" id="rng-x-min">—</span></div>
       <div class="range-row"><span class="range-label">max</span><span class="range-val" id="rng-x-max">—</span></div>
     </div>
-    <div class="range-card y">
+    <div class="range-card y" data-axis="y">
       <div class="axis-label">Y Axis</div>
       <div class="range-row"><span class="range-label">min</span><span class="range-val" id="rng-y-min">—</span></div>
       <div class="range-row"><span class="range-label">max</span><span class="range-val" id="rng-y-max">—</span></div>
     </div>
-    <div class="range-card z">
+    <div class="range-card z" data-axis="z">
       <div class="axis-label">Z Axis</div>
       <div class="range-row"><span class="range-label">min</span><span class="range-val" id="rng-z-min">—</span></div>
       <div class="range-row"><span class="range-label">max</span><span class="range-val" id="rng-z-max">—</span></div>
@@ -255,6 +258,19 @@ ws.onmessage = ({ data }) => {
     countEl.textContent = `${totalSamples.toLocaleString()} samples received`;
   }
 };
+
+// ── Axis toggle ───────────────────────────────────────────────
+const axisIndex = { x: 0, y: 1, z: 2 };
+
+document.querySelectorAll('.range-card[data-axis]').forEach(card => {
+  card.addEventListener('click', () => {
+    const idx = axisIndex[card.dataset.axis];
+    const ds = chart.data.datasets[idx];
+    ds.hidden = !ds.hidden;
+    card.classList.toggle('hidden-axis', ds.hidden);
+    chart.update('none');
+  });
+});
 
 // ── Pause / resume ────────────────────────────────────────────
 document.getElementById('pause-btn').addEventListener('click', function() {

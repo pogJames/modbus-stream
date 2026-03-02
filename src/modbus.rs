@@ -219,7 +219,7 @@ impl ModbusClient {
         let data = match self.read_holding_registers(registers::FIRMWARE_VERSION, 1).await {
             Ok(d)  => d,
             Err(e) => {
-                warn!("Firmware version register unsupported on this sensor: {}", e);
+                debug!("Firmware version register unsupported on this sensor: {}", e);
                 return Ok("n/a".to_string());
             }
         };

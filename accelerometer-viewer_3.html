@@ -1,0 +1,770 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Accelerometer Data Viewer</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            text-align: center;
+            margin-bottom: 20px;
+            color: #00d4ff;
+            font-weight: 300;
+            font-size: 1.8rem;
+        }
+
+        .upload-section {
+            background: #16213e;
+            border-radius: 12px;
+            padding: 30px;
+            text-align: center;
+            margin-bottom: 20px;
+            border: 2px dashed #0f3460;
+            transition: border-color 0.3s, background 0.3s;
+        }
+
+        .upload-section:hover {
+            border-color: #00d4ff;
+            background: #1a2a4a;
+        }
+
+        .upload-section.dragover {
+            border-color: #00d4ff;
+            background: #1a2a4a;
+        }
+
+        .upload-btn {
+            background: linear-gradient(135deg, #00d4ff, #0099cc);
+            color: #000;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 8px;
+            font-size: 1rem;
+            cursor: pointer;
+            font-weight: 600;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .upload-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 20px rgba(0, 212, 255, 0.4);
+        }
+
+        .upload-hint {
+            margin-top: 12px;
+            color: #888;
+            font-size: 0.9rem;
+        }
+
+        #fileInput {
+            display: none;
+        }
+
+        .stats-bar {
+            display: flex;
+            gap: 20px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+
+        .stat-card {
+            background: #16213e;
+            padding: 15px 25px;
+            border-radius: 10px;
+            flex: 1;
+            min-width: 150px;
+        }
+
+        .stat-label {
+            color: #888;
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .stat-value {
+            font-size: 1.4rem;
+            font-weight: 600;
+            margin-top: 5px;
+        }
+
+        .stat-value.x { color: #ff6b6b; }
+        .stat-value.y { color: #4ecdc4; }
+        .stat-value.z { color: #ffe66d; }
+
+        .chart-container {
+            background: #16213e;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+
+        .chart-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+
+        .chart-title {
+            font-size: 1.1rem;
+            color: #ccc;
+        }
+
+        .chart-controls {
+            display: flex;
+            gap: 20px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .window-size-control {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .window-size-control label {
+            color: #888;
+            font-size: 0.85rem;
+        }
+
+        .window-size-control input {
+            width: 100px;
+            padding: 6px 10px;
+            border: 1px solid #0f3460;
+            border-radius: 6px;
+            background: #0f3460;
+            color: #fff;
+            font-size: 0.9rem;
+            text-align: right;
+        }
+
+        .window-size-control input:focus {
+            outline: none;
+            border-color: #00d4ff;
+        }
+
+        .legend {
+            display: flex;
+            gap: 20px;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            cursor: pointer;
+            padding: 5px 10px;
+            border-radius: 5px;
+            transition: background 0.2s;
+            user-select: none;
+        }
+
+        .legend-item:hover {
+            background: rgba(255,255,255,0.1);
+        }
+
+        .legend-item.disabled {
+            opacity: 0.4;
+        }
+
+        .legend-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+        }
+
+        .legend-dot.x { background: #ff6b6b; }
+        .legend-dot.y { background: #4ecdc4; }
+        .legend-dot.z { background: #ffe66d; }
+
+        .chart-area {
+            position: relative;
+        }
+
+        #chart {
+            display: block;
+            width: 100%;
+            border-radius: 4px;
+        }
+
+        .slider-container {
+            margin-top: 20px;
+            padding: 0 10px;
+        }
+
+        .slider-label {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+            color: #888;
+            font-size: 0.85rem;
+        }
+
+        #positionSlider {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 100%;
+            height: 12px;
+            background: #0f3460;
+            border-radius: 6px;
+            outline: none;
+            cursor: pointer;
+        }
+
+        #positionSlider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 24px;
+            height: 24px;
+            background: linear-gradient(135deg, #00d4ff, #0099cc);
+            border-radius: 50%;
+            cursor: grab;
+            box-shadow: 0 2px 8px rgba(0, 212, 255, 0.4);
+            transition: transform 0.1s;
+        }
+
+        #positionSlider::-webkit-slider-thumb:hover {
+            transform: scale(1.1);
+        }
+
+        #positionSlider::-webkit-slider-thumb:active {
+            cursor: grabbing;
+            transform: scale(0.95);
+        }
+
+        #positionSlider::-moz-range-thumb {
+            width: 24px;
+            height: 24px;
+            background: linear-gradient(135deg, #00d4ff, #0099cc);
+            border-radius: 50%;
+            cursor: grab;
+            border: none;
+            box-shadow: 0 2px 8px rgba(0, 212, 255, 0.4);
+        }
+
+        #positionSlider::-moz-range-track {
+            background: #0f3460;
+            height: 12px;
+            border-radius: 6px;
+        }
+
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 15px;
+            color: #888;
+            font-size: 0.85rem;
+        }
+
+        .tooltip {
+            position: absolute;
+            background: rgba(22, 33, 62, 0.95);
+            border: 1px solid #00d4ff;
+            border-radius: 8px;
+            padding: 10px 14px;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.15s;
+            z-index: 100;
+            font-size: 0.9rem;
+        }
+
+        .tooltip-row {
+            margin: 3px 0;
+        }
+
+        .tooltip-label {
+            color: #888;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        @media (max-width: 600px) {
+            .stats-bar {
+                flex-direction: column;
+            }
+            .chart-header {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📊 Accelerometer Data Viewer</h1>
+
+        <div class="upload-section" id="dropZone">
+            <input type="file" id="fileInput" accept=".csv">
+            <button class="upload-btn" onclick="document.getElementById('fileInput').click()">
+                Choose CSV File
+            </button>
+            <p class="upload-hint">or drag and drop a CSV file here</p>
+            <p class="upload-hint">Expected format: x,y,z (with optional header row)</p>
+        </div>
+
+        <div id="dataSection" class="hidden">
+            <div class="stats-bar">
+                <div class="stat-card">
+                    <div class="stat-label">Data Points</div>
+                    <div class="stat-value" id="statPoints">0</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">X Range</div>
+                    <div class="stat-value x" id="statX">-</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Y Range</div>
+                    <div class="stat-value y" id="statY">-</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Z Range</div>
+                    <div class="stat-value z" id="statZ">-</div>
+                </div>
+            </div>
+
+            <div class="chart-container">
+                <div class="chart-header">
+                    <div class="chart-title">Accelerometer Readings</div>
+                    <div class="chart-controls">
+                        <div class="window-size-control">
+                            <label for="windowSizeInput">Window Size:</label>
+                            <input type="number" id="windowSizeInput" min="100" value="7812">
+                        </div>
+                        <div class="legend">
+                            <div class="legend-item" data-axis="x">
+                                <div class="legend-dot x"></div>
+                                <span>X-Axis</span>
+                            </div>
+                            <div class="legend-item" data-axis="y">
+                                <div class="legend-dot y"></div>
+                                <span>Y-Axis</span>
+                            </div>
+                            <div class="legend-item" data-axis="z">
+                                <div class="legend-dot z"></div>
+                                <span>Z-Axis</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="chart-area">
+                    <canvas id="chart"></canvas>
+                    <div class="tooltip" id="tooltip"></div>
+                </div>
+
+                <div class="slider-container">
+                    <div class="slider-label">
+                        <span>0</span>
+                        <span id="sliderPosition">Position: 0</span>
+                        <span id="sliderMax">0</span>
+                    </div>
+                    <input type="range" id="positionSlider" min="0" max="0" value="0">
+                </div>
+
+                <div class="info-row">
+                    <span id="rangeInfo">Window: 7,812 samples</span>
+                    <span id="viewingRange">Viewing: 0 - 7,812</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Configuration
+        let windowSize = 7812;
+
+        // State
+        let data = [];
+        let visibleAxes = { x: true, y: true, z: true };
+        let viewStart = 0;
+        let globalMin, globalMax;
+
+        // Colors
+        const colors = {
+            x: '#ff6b6b',
+            y: '#4ecdc4',
+            z: '#ffe66d'
+        };
+
+        // DOM Elements
+        const fileInput = document.getElementById('fileInput');
+        const dropZone = document.getElementById('dropZone');
+        const dataSection = document.getElementById('dataSection');
+        const canvas = document.getElementById('chart');
+        const ctx = canvas.getContext('2d');
+        const tooltip = document.getElementById('tooltip');
+        const positionSlider = document.getElementById('positionSlider');
+        const windowSizeInput = document.getElementById('windowSizeInput');
+
+        // File handling
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                loadFile(e.target.files[0]);
+            }
+        });
+
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.classList.add('dragover');
+        });
+
+        dropZone.addEventListener('dragleave', () => {
+            dropZone.classList.remove('dragover');
+        });
+
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+            if (e.dataTransfer.files.length > 0) {
+                loadFile(e.dataTransfer.files[0]);
+            }
+        });
+
+        function loadFile(file) {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                parseCSV(e.target.result);
+            };
+            reader.readAsText(file);
+        }
+
+        function parseCSV(text) {
+            const lines = text.trim().split('\n');
+            data = [];
+
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i].trim();
+                if (!line) continue;
+
+                const parts = line.split(/[,;\t]+/).map(p => p.trim());
+                
+                if (i === 0 && isNaN(parseFloat(parts[0]))) continue;
+
+                if (parts.length >= 3) {
+                    const x = parseFloat(parts[0]);
+                    const y = parseFloat(parts[1]);
+                    const z = parseFloat(parts[2]);
+                    
+                    if (!isNaN(x) && !isNaN(y) && !isNaN(z)) {
+                        data.push({ x, y, z });
+                    }
+                }
+            }
+
+            if (data.length > 0) {
+                // Calculate global min/max
+                globalMin = Infinity;
+                globalMax = -Infinity;
+                for (const d of data) {
+                    globalMin = Math.min(globalMin, d.x, d.y, d.z);
+                    globalMax = Math.max(globalMax, d.x, d.y, d.z);
+                }
+                const range = globalMax - globalMin || 1;
+                globalMin -= range * 0.1;
+                globalMax += range * 0.1;
+
+                // Setup slider
+                const maxStart = Math.max(0, data.length - windowSize);
+                positionSlider.min = 0;
+                positionSlider.max = maxStart;
+                positionSlider.value = 0;
+                viewStart = 0;
+
+                // Update window size input max value
+                windowSizeInput.max = data.length;
+
+                document.getElementById('sliderMax').textContent = data.length.toLocaleString();
+                
+                dataSection.classList.remove('hidden');
+                updateStats();
+                
+                requestAnimationFrame(() => {
+                    drawChart();
+                    updateSliderInfo();
+                });
+            } else {
+                alert('No valid data found in CSV. Expected format: x,y,z');
+            }
+        }
+
+        function updateStats() {
+            document.getElementById('statPoints').textContent = data.length.toLocaleString();
+
+            const xVals = data.map(d => d.x);
+            const yVals = data.map(d => d.y);
+            const zVals = data.map(d => d.z);
+
+            document.getElementById('statX').textContent = 
+                `${Math.min(...xVals).toFixed(2)} → ${Math.max(...xVals).toFixed(2)}`;
+            document.getElementById('statY').textContent = 
+                `${Math.min(...yVals).toFixed(2)} → ${Math.max(...yVals).toFixed(2)}`;
+            document.getElementById('statZ').textContent = 
+                `${Math.min(...zVals).toFixed(2)} → ${Math.max(...zVals).toFixed(2)}`;
+        }
+
+        function updateSliderInfo() {
+            const start = viewStart;
+            const end = Math.min(viewStart + windowSize, data.length);
+            
+            document.getElementById('sliderPosition').textContent = `Position: ${start.toLocaleString()}`;
+            document.getElementById('viewingRange').textContent = `Viewing: ${start.toLocaleString()} - ${end.toLocaleString()}`;
+            document.getElementById('rangeInfo').textContent = `Window: ${(end - start).toLocaleString()} samples`;
+        }
+
+        function drawChart() {
+            const container = canvas.parentElement;
+            const rect = container.getBoundingClientRect();
+            if (rect.width === 0) return;
+
+            const dpr = window.devicePixelRatio || 1;
+            const width = rect.width;
+            const height = 400;
+            
+            canvas.width = width * dpr;
+            canvas.height = height * dpr;
+            canvas.style.width = width + 'px';
+            canvas.style.height = height + 'px';
+            
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+            ctx.scale(dpr, dpr);
+
+            const padding = { top: 30, right: 20, bottom: 40, left: 60 };
+            const chartWidth = width - padding.left - padding.right;
+            const chartHeight = height - padding.top - padding.bottom;
+
+            // Clear
+            ctx.fillStyle = '#16213e';
+            ctx.fillRect(0, 0, width, height);
+
+            // Get visible window
+            const start = viewStart;
+            const end = Math.min(viewStart + windowSize, data.length);
+            const count = end - start;
+            
+            if (count <= 1) return;
+
+            // Scale functions
+            const scaleX = (i) => padding.left + ((i - start) / (count - 1)) * chartWidth;
+            const scaleY = (v) => padding.top + chartHeight - 
+                ((v - globalMin) / (globalMax - globalMin)) * chartHeight;
+
+            // Draw grid
+            ctx.strokeStyle = '#2a3a5a';
+            ctx.lineWidth = 1;
+
+            // Horizontal grid lines
+            const yTicks = 5;
+            for (let i = 0; i <= yTicks; i++) {
+                const y = padding.top + (i / yTicks) * chartHeight;
+                ctx.beginPath();
+                ctx.moveTo(padding.left, y);
+                ctx.lineTo(width - padding.right, y);
+                ctx.stroke();
+
+                const value = globalMax - (i / yTicks) * (globalMax - globalMin);
+                ctx.fillStyle = '#888';
+                ctx.font = '11px sans-serif';
+                ctx.textAlign = 'right';
+                ctx.fillText(value.toFixed(2), padding.left - 8, y + 4);
+            }
+
+            // Vertical grid lines
+            const xTicks = 10;
+            ctx.textAlign = 'center';
+            for (let i = 0; i <= xTicks; i++) {
+                const x = padding.left + (i / xTicks) * chartWidth;
+                ctx.beginPath();
+                ctx.moveTo(x, padding.top);
+                ctx.lineTo(x, height - padding.bottom);
+                ctx.stroke();
+
+                const sampleIndex = Math.floor(start + (i / xTicks) * (count - 1));
+                ctx.fillStyle = '#888';
+                ctx.fillText(sampleIndex.toLocaleString(), x, height - padding.bottom + 20);
+            }
+
+            // Draw data lines
+            for (const axis of ['x', 'y', 'z']) {
+                if (!visibleAxes[axis]) continue;
+
+                ctx.strokeStyle = colors[axis];
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+
+                let first = true;
+                for (let i = start; i < end; i++) {
+                    const px = scaleX(i);
+                    const py = scaleY(data[i][axis]);
+
+                    if (first) {
+                        ctx.moveTo(px, py);
+                        first = false;
+                    } else {
+                        ctx.lineTo(px, py);
+                    }
+                }
+                ctx.stroke();
+            }
+
+            // X-axis label
+            ctx.fillStyle = '#888';
+            ctx.font = '12px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('Sample Index', width / 2, height - 5);
+
+            // Store for tooltip
+            canvas._chartInfo = { padding, chartWidth, chartHeight, start, end, count };
+        }
+
+        // Slider event
+        positionSlider.addEventListener('input', (e) => {
+            viewStart = parseInt(e.target.value);
+            drawChart();
+            updateSliderInfo();
+        });
+
+        // Tooltip
+        canvas.addEventListener('mousemove', (e) => {
+            if (!canvas._chartInfo || data.length === 0) return;
+
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+
+            const { padding, chartWidth, start, count } = canvas._chartInfo;
+            
+            if (x < padding.left || x > rect.width - padding.right ||
+                y < padding.top || y > 400 - padding.bottom) {
+                tooltip.style.opacity = 0;
+                return;
+            }
+
+            const chartX = x - padding.left;
+            const relIndex = (chartX / chartWidth) * (count - 1);
+            const index = Math.round(start + relIndex);
+            
+            if (index >= 0 && index < data.length) {
+                const d = data[index];
+                
+                let html = `<div class="tooltip-row"><span class="tooltip-label">Sample:</span> ${index.toLocaleString()}</div>`;
+                if (visibleAxes.x) html += `<div class="tooltip-row" style="color:${colors.x}">X: ${d.x.toFixed(4)}</div>`;
+                if (visibleAxes.y) html += `<div class="tooltip-row" style="color:${colors.y}">Y: ${d.y.toFixed(4)}</div>`;
+                if (visibleAxes.z) html += `<div class="tooltip-row" style="color:${colors.z}">Z: ${d.z.toFixed(4)}</div>`;
+                
+                tooltip.innerHTML = html;
+                tooltip.style.opacity = 1;
+                
+                let tooltipX = x + 15;
+                if (tooltipX + 150 > rect.width) {
+                    tooltipX = x - 150;
+                }
+                
+                tooltip.style.left = tooltipX + 'px';
+                tooltip.style.top = (y - 10) + 'px';
+            }
+        });
+
+        canvas.addEventListener('mouseleave', () => {
+            tooltip.style.opacity = 0;
+        });
+
+        // Legend toggle
+        document.querySelectorAll('.legend-item').forEach(item => {
+            item.addEventListener('click', () => {
+                const axis = item.dataset.axis;
+                visibleAxes[axis] = !visibleAxes[axis];
+                item.classList.toggle('disabled', !visibleAxes[axis]);
+                drawChart();
+            });
+        });
+
+        // Keyboard navigation
+        document.addEventListener('keydown', (e) => {
+            if (data.length === 0) return;
+            
+            const maxStart = Math.max(0, data.length - windowSize);
+            const step = Math.floor(windowSize / 2);
+            
+            if (e.key === 'ArrowLeft') {
+                viewStart = Math.max(0, viewStart - step);
+                positionSlider.value = viewStart;
+                drawChart();
+                updateSliderInfo();
+            } else if (e.key === 'ArrowRight') {
+                viewStart = Math.min(maxStart, viewStart + step);
+                positionSlider.value = viewStart;
+                drawChart();
+                updateSliderInfo();
+            } else if (e.key === 'Home') {
+                viewStart = 0;
+                positionSlider.value = viewStart;
+                drawChart();
+                updateSliderInfo();
+            } else if (e.key === 'End') {
+                viewStart = maxStart;
+                positionSlider.value = viewStart;
+                drawChart();
+                updateSliderInfo();
+            }
+        });
+
+        // Window size input handler
+        windowSizeInput.addEventListener('change', (e) => {
+            let newSize = parseInt(e.target.value);
+            
+            // Clamp to valid range
+            if (isNaN(newSize) || newSize < 100) newSize = 100;
+            if (newSize > data.length) newSize = data.length;
+            
+            windowSizeInput.value = newSize;
+            windowSize = newSize;
+            
+            // Update slider max
+            const maxStart = Math.max(0, data.length - windowSize);
+            positionSlider.max = maxStart;
+            
+            // Adjust viewStart if needed
+            if (viewStart > maxStart) {
+                viewStart = maxStart;
+                positionSlider.value = viewStart;
+            }
+            
+            drawChart();
+            updateSliderInfo();
+        });
+
+        // Resize handling
+        window.addEventListener('resize', () => {
+            if (data.length > 0) {
+                drawChart();
+            }
+        });
+    </script>
+</body>
+</html>
