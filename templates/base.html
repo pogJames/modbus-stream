@@ -3,32 +3,24 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{ title }} - Modbus Stream</title>
+    <title>{{ title }} — Modbus Stream</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
     <link rel="stylesheet" href="/static/css/style.css">
     <script src="https://unpkg.com/htmx.org@1.9.10" integrity="sha384-D1Kt99CQMDuVetoL1lrYwg5t+9QdHe7NLX/SoJYkXDFfX37iInKRy5xLSi8nO7UC" crossorigin="anonymous"></script>
-    <style>
-        /* Loading indicator */
-        .htmx-indicator {
-            opacity: 0;
-            transition: opacity 200ms ease-in;
-        }
-        .htmx-request .htmx-indicator {
-            opacity: 1;
-        }
-        .htmx-request.htmx-indicator {
-            opacity: 1;
-        }
-    </style>
 </head>
 <body>
     <nav class="navbar">
-        <div class="navbar-brand">
-            <h1>🔧 Modbus Stream</h1>
-        </div>
-        <div class="navbar-nav">
-            <a href="/" class="nav-link">Dashboard</a>
-            <a href="/settings" class="nav-link">Settings</a>
-            <a href="/diagnostics" class="nav-link">Diagnostics</a>
+        <div class="container">
+            <div class="navbar-brand">
+                <a href="/" class="brand-link">Modbus Stream</a>
+            </div>
+            <div class="navbar-nav">
+                <a href="/" class="nav-link">Dashboard</a>
+                <a href="/settings" class="nav-link">Settings</a>
+                <a href="/view/diagnostics" class="nav-link">Diagnostics</a>
+            </div>
         </div>
     </nav>
 
@@ -38,7 +30,7 @@
 
     <footer class="footer">
         <div class="container">
-            <span>Modbus Stream v{{ version or "0.1.0" }} - Tri-axial Accelerometer Interface</span>
+            Modbus Stream v{{ version or "0.1.0" }} — Tri-axial Accelerometer Interface
         </div>
     </footer>
 </body>

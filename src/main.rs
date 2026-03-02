@@ -12,9 +12,10 @@ use minijinja_autoreload::AutoReloader;
 use serde::{Deserialize, Serialize};
 use std::{net::SocketAddr, path::Path, sync::Arc};
 use tokio::net::TcpListener;
-use tokio::time::Instant;
+use std::time::Duration;
+use tokio::time::{Instant, timeout};
 use tower_http::{cors::CorsLayer, services::ServeDir};
-use tracing::{info, warn};
+use tracing::info;
 
 mod config;
 mod modbus;
@@ -23,7 +24,6 @@ mod types;
 
 use config::AppConfig;
 use modbus::ModbusClient;
-use types::*;
 
 /// Modbus Stream Server - Web interface for tri-axial accelerometer
 #[derive(Parser, Debug)]
@@ -56,6 +56,18 @@ pub struct AppState {
     config: Arc<AppConfig>,
     config_path: String,
     template_env: Arc<AutoReloader>,
+}
+
+/// Lower the FTDI USB serial latency timer from 16ms → 1ms before opening the port.
+/// Without this, every Modbus transaction has a 16ms extra delay.
+fn set_ftdi_latency(device: &str) {
+    if let Some(name) = device.strip_prefix("/dev/") {
+        let path = format!("/sys/bus/usb-serial/devices/{}/latency_timer", name);
+        match std::fs::write(&path, "1") {
+            Ok(_)  => info!("FTDI latency timer → 1 ms"),
+            Err(e) => println!("  Note: could not set FTDI latency ({}) — try: echo 1 | sudo tee {}", e, path),
+        }
+    }
 }
 
 /// Runs pre-startup device diagnostics and returns a ModbusClient if connection succeeds.
@@ -128,10 +140,16 @@ async fn run_startup_diagnostics(
 
     // Step 4: Test actual Modbus communication
     print!("  [4/4] Testing Modbus communication ... ");
+    let _ = std::io::Write::flush(&mut std::io::stdout());
     let t = Instant::now();
-    match client.test_connection().await {
-        Ok(()) => {
-            let elapsed = t.elapsed().as_millis();
+    let test_result = timeout(
+        Duration::from_millis(timeout_ms),
+        client.test_connection(),
+    ).await;
+    let elapsed = t.elapsed().as_millis();
+
+    match test_result {
+        Ok(Ok(())) => {
             println!("OK ({} ms)", elapsed);
 
             // Read extra device info to confirm it's the right sensor
@@ -150,21 +168,48 @@ async fn run_startup_diagnostics(
             println!("{}\n", border);
             Some(client)
         }
-        Err(e) => {
-            let elapsed = t.elapsed().as_millis();
+        Ok(Err(e)) => {
             println!("FAIL ({} ms)", elapsed);
             println!("         ✗ {}", e);
-            if elapsed >= timeout_ms {
-                println!("         → Timed out — device may be powered off or wrong baud rate");
-            } else {
-                println!("         → Device found but not responding to Modbus queries");
-            }
+            println!("         → Device found but not responding to Modbus queries");
             println!("         → Verify slave ID {} matches sensor configuration", slave_id);
             println!("         → Verify baud rate {} bps matches sensor", baud_rate);
             println!("         → Check sensor is powered and Modbus mode is enabled");
             println!("\n  Result: NOT RESPONDING — server starting in offline mode");
             println!("{}\n", border);
-            // Return None: port opened but device not talking; no point holding the port
+            None
+        }
+        Err(_) => {
+            println!("TIMED OUT ({} ms)", elapsed);
+            println!("         ✗ No response after {} ms", timeout_ms);
+            println!();
+            println!("         Serial port opened OK but sensor is not replying.");
+            println!("         Most likely causes:");
+            println!();
+            println!("         [RS485 direction control]");
+            println!("           FT232R is a plain UART — it has no automatic RS485");
+            println!("           direction switching. Your adapter must handle DE/RE");
+            println!("           itself, or the request is sent but TX is never enabled.");
+            println!("           → Check your USB-RS485 adapter has auto direction control");
+            println!("           → Or try an adapter with automatic flow control (e.g. CH340)");
+            println!();
+            println!("         [Wrong slave ID]");
+            println!("           Config has slave ID {}. Sensor default is usually 1.", slave_id);
+            println!("           → Try broadcasting: set slave_id = 0 in config.toml");
+            println!();
+            println!("         [Wrong baud rate]");
+            println!("           Config has {} bps. Sensor default is 115200.", baud_rate);
+            println!("           → Verify with sensor documentation or try 9600");
+            println!();
+            println!("         [Wiring]");
+            println!("           → Verify A/B lines are not swapped");
+            println!("           → Check termination resistor (120Ω) if cable is long");
+            println!();
+            println!("         → Run with debug logging for raw bytes:");
+            println!("           RUST_LOG=debug cargo run");
+            println!("         → Or test with mbpoll: mbpoll -a {} -b {} {} -t 3 -r 20", slave_id, baud_rate, device_path);
+            println!("\n  Result: TIMED OUT — server starting in offline mode");
+            println!("{}\n", border);
             None
         }
     }
@@ -186,8 +231,9 @@ async fn main() -> Result<()> {
     let config = AppConfig::load(&args.config)?;
     info!("Loaded configuration from {}", args.config);
 
-    // Try to initialize Modbus client with full startup diagnostics
+    // Lower FTDI latency before touching the serial port
     let device_path = args.device.unwrap_or_else(|| config.modbus.device.clone());
+    set_ftdi_latency(&device_path);
     let baud_rate = if args.baud_rate != 115200 {
         args.baud_rate
     } else {
@@ -278,6 +324,14 @@ async fn main() -> Result<()> {
         .route("/settings/ports", get(routes::settings::get_available_ports))
         .route("/settings/validate", post(routes::settings::validate_field_handler))
         
+        // View pages (charts + data)
+        .route("/view/raw", get(routes::view::raw_stream_page))
+        .route("/view/metrics", get(routes::view::metrics_stream_page))
+        .route("/view/latest-raw", get(routes::view::latest_raw_page))
+        .route("/view/all-metrics", get(routes::view::all_metrics_page))
+        .route("/view/health", get(routes::view::health_page))
+        .route("/view/diagnostics", get(routes::view::diagnostics_page))
+
         // Static files and diagnostics
         .route("/diagnostics", get(routes::diagnostics::get_diagnostics))
         .nest_service("/static", get_service(ServeDir::new("static")).handle_error(|e| async move {
@@ -330,7 +384,13 @@ fn url_for(name: &str, _args: Vec<minijinja::Value>) -> Result<minijinja::Value,
         "reset_settings" => Ok(minijinja::Value::from("/settings/reset")),
         "get_ports" => Ok(minijinja::Value::from("/settings/ports")),
         "validate_settings" => Ok(minijinja::Value::from("/settings/validate")),
-        "diagnostics" => Ok(minijinja::Value::from("/diagnostics")),
+        "diagnostics"   => Ok(minijinja::Value::from("/diagnostics")),
+        "view_raw"        => Ok(minijinja::Value::from("/view/raw")),
+        "view_metrics"    => Ok(minijinja::Value::from("/view/metrics")),
+        "view_latest_raw"   => Ok(minijinja::Value::from("/view/latest-raw")),
+        "view_all_metrics"  => Ok(minijinja::Value::from("/view/all-metrics")),
+        "view_health"       => Ok(minijinja::Value::from("/view/health")),
+        "view_diagnostics"  => Ok(minijinja::Value::from("/view/diagnostics")),
         _ => Err(minijinja::Error::new(
             minijinja::ErrorKind::InvalidOperation,
             format!("unknown route: {}", name),

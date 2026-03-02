@@ -1,0 +1,168 @@
+{% extends "base.html" %}
+
+{% block content %}
+<style>
+  .view-header    { display:flex; align-items:center; gap:1rem; margin-bottom:1.5rem; flex-wrap:wrap; }
+  .view-header h2 { font-size:1.4rem; font-weight:600; color:var(--text-primary); flex:1; }
+  .ws-status      { font-size:0.82rem; padding:4px 10px; border-radius:12px; background:var(--background-light); border:1px solid var(--border-color); }
+  .ws-status.ok   { color:#16a34a; border-color:#16a34a; }
+  .ws-status.err  { color:#dc2626; border-color:#dc2626; }
+
+  .current-values {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+  }
+  .val-card {
+    background: var(--background-white);
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius);
+    padding: 1rem 1.25rem;
+    text-align: center;
+  }
+  .val-card .axis  { font-size:0.75rem; color:var(--text-secondary); text-transform:uppercase; letter-spacing:1px; margin-bottom:4px; }
+  .val-card .value { font-size:1.5rem; font-weight:700; font-family:monospace; }
+  .val-card.x .value { color:#ef4444; }
+  .val-card.y .value { color:#22c55e; }
+  .val-card.z .value { color:#3b82f6; }
+
+  .chart-card {
+    background: var(--background-white);
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius);
+    padding: 1.25rem;
+  }
+  .chart-toolbar {
+    display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;
+  }
+  .chart-toolbar span { font-size:0.8rem; color:var(--text-secondary); }
+
+  .sample-counter { font-size:0.75rem; color:var(--text-secondary); margin-top:0.5rem; text-align:right; }
+</style>
+
+<div style="padding:2rem 0;">
+  <div class="view-header">
+    <a href="/" class="btn btn-info">← Dashboard</a>
+    <h2>📡 Raw Data Stream</h2>
+    <span class="ws-status" id="ws-status">Connecting…</span>
+  </div>
+
+  <div class="current-values">
+    <div class="val-card x">
+      <div class="axis">X axis</div>
+      <div class="value" id="cur-x">—</div>
+    </div>
+    <div class="val-card y">
+      <div class="axis">Y axis</div>
+      <div class="value" id="cur-y">—</div>
+    </div>
+    <div class="val-card z">
+      <div class="axis">Z axis</div>
+      <div class="value" id="cur-z">—</div>
+    </div>
+  </div>
+
+  <div class="chart-card">
+    <div class="chart-toolbar">
+      <span>Acceleration (g) — last 500 samples</span>
+      <button id="pause-btn" class="btn btn-info" style="padding:4px 12px;font-size:0.8rem;">Pause</button>
+    </div>
+    <canvas id="chart"></canvas>
+    <div class="sample-counter" id="sample-count">0 samples received</div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+const MAX_POINTS = 500;
+
+// Rolling data arrays
+const labels = new Array(MAX_POINTS).fill('');
+const xData  = new Array(MAX_POINTS).fill(null);
+const yData  = new Array(MAX_POINTS).fill(null);
+const zData  = new Array(MAX_POINTS).fill(null);
+
+const chart = new Chart(document.getElementById('chart'), {
+  type: 'line',
+  data: {
+    labels,
+    datasets: [
+      { label: 'X (g)', data: xData, borderColor: '#ef4444', borderWidth: 1.5, pointRadius: 0, tension: 0 },
+      { label: 'Y (g)', data: yData, borderColor: '#22c55e', borderWidth: 1.5, pointRadius: 0, tension: 0 },
+      { label: 'Z (g)', data: zData, borderColor: '#3b82f6', borderWidth: 1.5, pointRadius: 0, tension: 0 },
+    ]
+  },
+  options: {
+    animation: false,
+    responsive: true,
+    interaction: { mode: 'index', intersect: false },
+    scales: {
+      x: { display: false },
+      y: { title: { display: true, text: 'g', color: '#888' }, grid: { color: '#2a2a2a' }, ticks: { color: '#888' } }
+    },
+    plugins: {
+      legend: { labels: { color: '#ccc', boxWidth: 12 } }
+    }
+  }
+});
+
+// Incoming sample buffer (WebSocket may deliver batches)
+let pending = [];
+let paused  = false;
+let totalSamples = 0;
+
+// Update chart at ~30 fps
+setInterval(() => {
+  if (paused || pending.length === 0) return;
+
+  for (const s of pending) {
+    xData.push(s.x);
+    yData.push(s.y);
+    zData.push(s.z);
+    labels.push('');
+  }
+  pending = [];
+
+  // Trim to MAX_POINTS
+  if (xData.length > MAX_POINTS) {
+    xData.splice(0, xData.length - MAX_POINTS);
+    yData.splice(0, yData.length - MAX_POINTS);
+    zData.splice(0, zData.length - MAX_POINTS);
+    labels.splice(0, labels.length - MAX_POINTS);
+  }
+
+  // Update current value display from latest point
+  const last = xData.length - 1;
+  document.getElementById('cur-x').textContent = xData[last] != null ? xData[last].toFixed(4) + ' g' : '—';
+  document.getElementById('cur-y').textContent = yData[last] != null ? yData[last].toFixed(4) + ' g' : '—';
+  document.getElementById('cur-z').textContent = zData[last] != null ? zData[last].toFixed(4) + ' g' : '—';
+
+  chart.update('none');
+}, 33);
+
+// WebSocket
+const ws     = new WebSocket(`ws://${location.host}/stream/raw`);
+const statusEl = document.getElementById('ws-status');
+const countEl  = document.getElementById('sample-count');
+
+ws.onopen  = () => { statusEl.textContent = 'Connected'; statusEl.className = 'ws-status ok'; };
+ws.onclose = () => { statusEl.textContent = 'Disconnected'; statusEl.className = 'ws-status err'; };
+ws.onerror = () => { statusEl.textContent = 'Error'; statusEl.className = 'ws-status err'; };
+
+ws.onmessage = ({ data }) => {
+  const msg = JSON.parse(data);
+  if (msg.type === 'raw' && Array.isArray(msg.data) && msg.data.length > 0) {
+    pending.push(...msg.data);
+    totalSamples += msg.data.length;
+    countEl.textContent = `${totalSamples.toLocaleString()} samples received`;
+  }
+};
+
+// Pause / resume
+document.getElementById('pause-btn').addEventListener('click', function() {
+  paused = !paused;
+  this.textContent = paused ? 'Resume' : 'Pause';
+});
+</script>
+{% endblock %}

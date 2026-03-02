@@ -3,3 +3,4 @@ pub mod read;
 pub mod stream;
 pub mod diagnostics;
 pub mod settings;
+pub mod view;

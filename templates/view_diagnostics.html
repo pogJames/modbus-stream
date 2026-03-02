@@ -1,0 +1,246 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div style="padding: 2rem 0;">
+
+  <div class="page-header">
+    <a href="/" class="btn btn-info">← Dashboard</a>
+    <h1 class="page-title">Diagnostics</h1>
+    <span class="badge" id="poll-badge">
+      <span class="badge-dot"></span>
+      Loading…
+    </span>
+  </div>
+
+  <!-- Connection + Sensor row -->
+  <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:0.75rem; margin-bottom:1.5rem;">
+
+    <!-- Connection status -->
+    <div class="card">
+      <div class="section-label">Connection</div>
+      <div style="display:flex; align-items:center; gap:0.75rem; margin-bottom:0.875rem;">
+        <span class="badge" id="conn-badge"><span class="badge-dot"></span> —</span>
+      </div>
+      <div id="conn-error" style="font-size:0.8rem; color:var(--red); display:none; margin-top:0.25rem;"></div>
+    </div>
+
+    <!-- Sensor info -->
+    <div class="card" id="sensor-card">
+      <div class="section-label">Sensor</div>
+      <div id="sensor-content" style="display:grid; grid-template-columns:1fr 1fr; gap:0.625rem 1rem;">
+        <div>
+          <div style="font-size:0.65rem;color:var(--muted-foreground);text-transform:uppercase;letter-spacing:1px;margin-bottom:2px;">Model</div>
+          <div style="font-weight:600;font-size:0.875rem;" id="s-model">—</div>
+        </div>
+        <div>
+          <div style="font-size:0.65rem;color:var(--muted-foreground);text-transform:uppercase;letter-spacing:1px;margin-bottom:2px;">Gain</div>
+          <div style="font-weight:600;font-size:0.875rem;" id="s-gain">—</div>
+        </div>
+        <div>
+          <div style="font-size:0.65rem;color:var(--muted-foreground);text-transform:uppercase;letter-spacing:1px;margin-bottom:2px;">Serial</div>
+          <div style="font-family:'JetBrains Mono',monospace;font-size:0.8125rem;" id="s-serial">—</div>
+        </div>
+        <div>
+          <div style="font-size:0.65rem;color:var(--muted-foreground);text-transform:uppercase;letter-spacing:1px;margin-bottom:2px;">Firmware</div>
+          <div style="font-family:'JetBrains Mono',monospace;font-size:0.8125rem;" id="s-fw">—</div>
+        </div>
+        <div>
+          <div style="font-size:0.65rem;color:var(--muted-foreground);text-transform:uppercase;letter-spacing:1px;margin-bottom:2px;">Temperature</div>
+          <div style="font-family:'JetBrains Mono',monospace;font-size:0.8125rem;color:#a855f7;" id="s-temp">—</div>
+        </div>
+        <div>
+          <div style="font-size:0.65rem;color:var(--muted-foreground);text-transform:uppercase;letter-spacing:1px;margin-bottom:2px;">FIFO</div>
+          <div style="font-family:'JetBrains Mono',monospace;font-size:0.8125rem;" id="s-fifo">—</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modbus config -->
+    <div class="card">
+      <div class="section-label">Modbus Config</div>
+      <div style="display:grid; gap:0.5rem;">
+        <div style="display:flex; justify-content:space-between; align-items:baseline;">
+          <span style="font-size:0.8rem;color:var(--muted-foreground);">Device</span>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:0.8125rem;" id="c-device">—</span>
+        </div>
+        <div style="display:flex; justify-content:space-between; align-items:baseline;">
+          <span style="font-size:0.8rem;color:var(--muted-foreground);">Baud Rate</span>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:0.8125rem;" id="c-baud">—</span>
+        </div>
+        <div style="display:flex; justify-content:space-between; align-items:baseline;">
+          <span style="font-size:0.8rem;color:var(--muted-foreground);">Slave ID</span>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:0.8125rem;" id="c-slave">—</span>
+        </div>
+        <div style="display:flex; justify-content:space-between; align-items:baseline;">
+          <span style="font-size:0.8rem;color:var(--muted-foreground);">Timeout</span>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:0.8125rem;" id="c-timeout">—</span>
+        </div>
+        <div style="display:flex; justify-content:space-between; align-items:baseline;">
+          <span style="font-size:0.8rem;color:var(--muted-foreground);">Retry Attempts</span>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:0.8125rem;" id="c-retry">—</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Streaming + System row -->
+  <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:0.75rem; margin-bottom:1.5rem;">
+
+    <div class="card">
+      <div class="section-label">Streaming</div>
+      <div style="display:grid; gap:0.5rem;">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <span style="font-size:0.8rem;color:var(--muted-foreground);">Capability</span>
+          <span class="badge" id="stream-cap-badge"><span class="badge-dot"></span> —</span>
+        </div>
+        <div style="display:flex; justify-content:space-between; align-items:baseline;">
+          <span style="font-size:0.8rem;color:var(--muted-foreground);">Max Connections</span>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:0.8125rem;" id="str-maxconn">—</span>
+        </div>
+        <div style="display:flex; justify-content:space-between; align-items:baseline;">
+          <span style="font-size:0.8rem;color:var(--muted-foreground);">Buffer Size</span>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:0.8125rem;" id="str-buf">—</span>
+        </div>
+        <div style="display:flex; justify-content:space-between; align-items:baseline;">
+          <span style="font-size:0.8rem;color:var(--muted-foreground);">Metrics Rate</span>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:0.8125rem;" id="str-rate">—</span>
+        </div>
+        <div style="display:flex; justify-content:space-between; align-items:baseline;">
+          <span style="font-size:0.8rem;color:var(--muted-foreground);">Raw Max Samples</span>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:0.8125rem;" id="str-maxsamp">—</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="section-label">System</div>
+      <div style="display:grid; gap:0.5rem;">
+        <div style="display:flex; justify-content:space-between; align-items:baseline;">
+          <span style="font-size:0.8rem;color:var(--muted-foreground);">Service</span>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:0.8125rem;" id="sys-svc">—</span>
+        </div>
+        <div style="display:flex; justify-content:space-between; align-items:baseline;">
+          <span style="font-size:0.8rem;color:var(--muted-foreground);">Version</span>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:0.8125rem;" id="sys-ver">—</span>
+        </div>
+        <div style="display:flex; justify-content:space-between; align-items:baseline;">
+          <span style="font-size:0.8rem;color:var(--muted-foreground);">OS</span>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:0.8125rem;" id="sys-os">—</span>
+        </div>
+        <div style="display:flex; justify-content:space-between; align-items:baseline;">
+          <span style="font-size:0.8rem;color:var(--muted-foreground);">Arch</span>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:0.8125rem;" id="sys-arch">—</span>
+        </div>
+        <div style="display:flex; justify-content:space-between; align-items:baseline;">
+          <span style="font-size:0.8rem;color:var(--muted-foreground);">Rust</span>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:0.8125rem;" id="sys-rust">—</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="data-footer">
+    <span id="footer-ts">—</span>
+    <span>Refreshes every 5 s</span>
+  </div>
+
+</div>
+
+<script>
+const pollBadge = document.getElementById('poll-badge');
+
+function s(id, v) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = v ?? '—';
+}
+
+function setOk() {
+  pollBadge.className = 'badge ok';
+  pollBadge.lastChild.textContent = ' Live';
+}
+function setErr(msg) {
+  pollBadge.className = 'badge err';
+  pollBadge.lastChild.textContent = ' ' + (msg || 'Error');
+}
+
+async function poll() {
+  try {
+    const res = await fetch('/diagnostics');
+    if (!res.ok) { setErr('HTTP ' + res.status); return; }
+    const d = await res.json();
+
+    // Connection
+    const connBadge = document.getElementById('conn-badge');
+    const connErr   = document.getElementById('conn-error');
+    if (d.connection?.connected) {
+      connBadge.className = 'badge ok';
+      connBadge.lastChild.textContent = ' Connected';
+      connErr.style.display = 'none';
+    } else {
+      connBadge.className = 'badge err';
+      connBadge.lastChild.textContent = ' ' + (d.connection?.status === 'no_device' ? 'No Device' : 'Error');
+      if (d.connection?.error) {
+        connErr.style.display = 'block';
+        connErr.textContent = d.connection.error;
+      }
+    }
+
+    // Sensor
+    const sens = d.sensor;
+    if (sens) {
+      s('s-model',  sens.ucid?.model);
+      s('s-gain',   sens.ucid?.gain);
+      s('s-serial', sens.ucid?.serialNumber);
+      s('s-fw',     sens.firmwareVersion?.value);
+      s('s-temp',   sens.temperature?.value != null ? sens.temperature.value.toFixed(1) + ' °C' : '—');
+      s('s-fifo',   sens.fifoBufferSize?.value != null ? sens.fifoBufferSize.value + ' samples' : '—');
+    } else {
+      ['s-model','s-gain','s-serial','s-fw','s-temp','s-fifo'].forEach(id => s(id, '—'));
+    }
+
+    // Config
+    const cfg = d.config;
+    s('c-device',  cfg?.device);
+    const baud = cfg?.baudRate;
+    s('c-baud', baud ? (baud >= 1000000 ? (baud / 1000000).toFixed(0) + ' Mbps' : baud + ' bps') : '—');
+    s('c-slave',   cfg?.slaveId);
+    s('c-timeout', cfg?.timeout != null ? cfg.timeout + ' ms' : '—');
+    s('c-retry',   cfg?.retryAttempts);
+
+    // Streaming
+    const str = d.streaming;
+    const capBadge = document.getElementById('stream-cap-badge');
+    if (str?.capability === 'full') {
+      capBadge.className = 'badge ok';
+      capBadge.lastChild.textContent = ' Full (raw + metrics)';
+    } else if (str?.capability === 'metrics-only') {
+      capBadge.className = 'badge warn';
+      capBadge.lastChild.textContent = ' Metrics only';
+    }
+    s('str-maxconn', str?.maxConnections);
+    s('str-buf',     str?.bufferSize);
+    s('str-rate',    str?.metricsUpdateRate != null ? str.metricsUpdateRate + ' Hz' : '—');
+    s('str-maxsamp', str?.rawDataMaxSamples);
+
+    // System
+    s('sys-svc',  d.service);
+    s('sys-ver',  d.version);
+    s('sys-os',   d.system?.os);
+    s('sys-arch', d.system?.arch);
+    s('sys-rust', d.system?.rustVersion);
+
+    document.getElementById('footer-ts').textContent =
+      'Last: ' + new Date(d.timestamp).toLocaleTimeString();
+
+    setOk();
+  } catch (e) {
+    setErr('Offline');
+  }
+}
+
+poll();
+setInterval(poll, 5000);
+</script>
+{% endblock %}

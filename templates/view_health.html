@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div style="padding: 2rem 0;">
+
+  <div class="page-header">
+    <a href="/" class="btn btn-info">← Dashboard</a>
+    <h1 class="page-title">Health</h1>
+    <span class="badge" id="poll-badge">
+      <span class="badge-dot"></span>
+      Checking…
+    </span>
+  </div>
+
+  <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap:0.75rem; margin-bottom:1.5rem;">
+
+    <!-- Service status -->
+    <div class="card">
+      <div class="section-label">Service</div>
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:1rem;">
+        <span style="font-weight:600; font-size:1rem;">modbus-stream</span>
+        <span class="badge ok" id="svc-badge"><span class="badge-dot"></span> Healthy</span>
+      </div>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.5rem;">
+        <div>
+          <div style="font-size:0.65rem;color:var(--muted-foreground);text-transform:uppercase;letter-spacing:1px;margin-bottom:3px;">Version</div>
+          <div style="font-family:'JetBrains Mono',monospace; font-size:0.875rem; font-weight:500;" id="svc-version">—</div>
+        </div>
+        <div>
+          <div style="font-size:0.65rem;color:var(--muted-foreground);text-transform:uppercase;letter-spacing:1px;margin-bottom:3px;">Checked</div>
+          <div style="font-family:'JetBrains Mono',monospace; font-size:0.875rem; font-weight:500;" id="svc-ts">—</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Sensor connection -->
+    <div class="card">
+      <div class="section-label">Sensor Connection</div>
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:1rem;">
+        <span style="font-weight:600; font-size:1rem;" id="sensor-device">—</span>
+        <span class="badge" id="sensor-badge"><span class="badge-dot"></span> Checking…</span>
+      </div>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.5rem;">
+        <div>
+          <div style="font-size:0.65rem;color:var(--muted-foreground);text-transform:uppercase;letter-spacing:1px;margin-bottom:3px;">Baud Rate</div>
+          <div style="font-family:'JetBrains Mono',monospace; font-size:0.875rem; font-weight:500;" id="sensor-baud">—</div>
+        </div>
+        <div>
+          <div style="font-size:0.65rem;color:var(--muted-foreground);text-transform:uppercase;letter-spacing:1px;margin-bottom:3px;">Temperature</div>
+          <div style="font-family:'JetBrains Mono',monospace; font-size:0.875rem; font-weight:500; color:#a855f7;" id="sensor-temp">—</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="data-footer">
+    <span id="footer-ts">—</span>
+    <span>Refreshes every 5 s</span>
+  </div>
+
+</div>
+
+<script>
+const pollBadge   = document.getElementById('poll-badge');
+
+function setOk() {
+  pollBadge.className = 'badge ok';
+  pollBadge.lastChild.textContent = ' Live';
+}
+function setErr(msg) {
+  pollBadge.className = 'badge err';
+  pollBadge.lastChild.textContent = ' ' + (msg || 'Error');
+}
+
+async function poll() {
+  try {
+    const [hRes, tRes, dRes] = await Promise.all([
+      fetch('/health'),
+      fetch('/read/temperature'),
+      fetch('/diagnostics'),
+    ]);
+
+    // Service health
+    if (hRes.ok) {
+      const h = await hRes.json();
+      document.getElementById('svc-version').textContent = h.version || '—';
+      document.getElementById('svc-ts').textContent = new Date(h.timestamp).toLocaleTimeString();
+    }
+
+    // Sensor connection via temperature probe
+    const sensorBadge = document.getElementById('sensor-badge');
+    if (tRes.ok) {
+      const t = await tRes.json();
+      sensorBadge.className = 'badge ok';
+      sensorBadge.lastChild.textContent = ' Connected';
+      document.getElementById('sensor-temp').textContent =
+        t.temperature != null ? t.temperature.toFixed(1) + ' °C' : '—';
+    } else {
+      sensorBadge.className = 'badge err';
+      sensorBadge.lastChild.textContent = ' Offline';
+      document.getElementById('sensor-temp').textContent = '—';
+    }
+
+    // Config details from diagnostics
+    if (dRes.ok) {
+      const d = await dRes.json();
+      document.getElementById('sensor-device').textContent = d.config?.device || '—';
+      const baud = d.config?.baudRate;
+      document.getElementById('sensor-baud').textContent =
+        baud ? (baud >= 1000000 ? (baud / 1000000).toFixed(0) + ' Mbps' : baud + ' bps') : '—';
+    }
+
+    document.getElementById('footer-ts').textContent =
+      'Last: ' + new Date().toLocaleTimeString();
+
+    setOk();
+  } catch (e) {
+    setErr('Offline');
+  }
+}
+
+poll();
+setInterval(poll, 5000);
+</script>
+{% endblock %}

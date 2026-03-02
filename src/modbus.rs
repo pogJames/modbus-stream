@@ -214,16 +214,16 @@ impl ModbusClient {
         debug!("Scale factor cache cleared");
     }
 
-    /// Read firmware version
+    /// Read firmware version — returns "n/a" if the register is not supported by this sensor
     pub async fn read_firmware_version(&self) -> Result<String> {
-        let data = self
-            .read_holding_registers(registers::FIRMWARE_VERSION, 1)
-            .await?;
-        let version = format!("{}.{}.{}", 
-            (data[0] >> 8) & 0xFF, 
-            data[0] & 0xFF, 
-            0
-        );
+        let data = match self.read_holding_registers(registers::FIRMWARE_VERSION, 1).await {
+            Ok(d)  => d,
+            Err(e) => {
+                warn!("Firmware version register unsupported on this sensor: {}", e);
+                return Ok("n/a".to_string());
+            }
+        };
+        let version = format!("{}.{}", (data[0] >> 8) & 0xFF, data[0] & 0xFF);
         debug!("Firmware version: {}", version);
         Ok(version)
     }

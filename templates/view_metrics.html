@@ -1,0 +1,205 @@
+{% extends "base.html" %}
+
+{% block content %}
+<style>
+  .view-header    { display:flex; align-items:center; gap:1rem; margin-bottom:1.5rem; flex-wrap:wrap; }
+  .view-header h2 { font-size:1.4rem; font-weight:600; color:var(--text-primary); flex:1; }
+  .ws-status      { font-size:0.82rem; padding:4px 10px; border-radius:12px; background:var(--background-light); border:1px solid var(--border-color); }
+  .ws-status.ok   { color:#16a34a; border-color:#16a34a; }
+  .ws-status.err  { color:#dc2626; border-color:#dc2626; }
+
+  .metrics-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+  }
+  .metric-card {
+    background: var(--background-white);
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius);
+    padding: 1rem 1.25rem;
+  }
+  .metric-card h3 {
+    font-size:0.72rem; color:var(--text-secondary);
+    text-transform:uppercase; letter-spacing:1.5px;
+    margin-bottom:0.75rem; border-bottom:1px solid var(--border-color); padding-bottom:6px;
+  }
+  .metric-row { display:flex; justify-content:space-between; align-items:baseline; padding:3px 0; }
+  .metric-row .lbl { font-size:0.8rem; color:var(--text-secondary); }
+  .metric-row .val { font-size:0.9rem; font-weight:600; font-family:monospace; }
+  .val.x { color:#ef4444; }
+  .val.y { color:#22c55e; }
+  .val.z { color:#3b82f6; }
+  .val.freq { color:#f59e0b; }
+  .val.temp { color:#a855f7; font-size:1.1rem; }
+
+  .chart-card {
+    background: var(--background-white);
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius);
+    padding: 1.25rem;
+    margin-bottom: 1rem;
+  }
+  .chart-card h3 { font-size:0.8rem; color:var(--text-secondary); text-transform:uppercase; letter-spacing:1px; margin-bottom:1rem; }
+</style>
+
+<div style="padding:2rem 0;">
+  <div class="view-header">
+    <a href="/" class="btn btn-info">← Dashboard</a>
+    <h2>📊 Metrics Stream</h2>
+    <span class="ws-status" id="ws-status">Connecting…</span>
+  </div>
+
+  <!-- Current values grid -->
+  <div class="metrics-grid">
+
+    <div class="metric-card" style="grid-column:span 1">
+      <h3>Temperature</h3>
+      <div style="text-align:center; padding:0.5rem 0;">
+        <span class="val temp" id="m-temp">—</span>
+      </div>
+    </div>
+
+    <div class="metric-card">
+      <h3>Gravity RMS (g)</h3>
+      <div class="metric-row"><span class="lbl">X</span><span class="val x" id="g-rms-x">—</span></div>
+      <div class="metric-row"><span class="lbl">Y</span><span class="val y" id="g-rms-y">—</span></div>
+      <div class="metric-row"><span class="lbl">Z</span><span class="val z" id="g-rms-z">—</span></div>
+    </div>
+
+    <div class="metric-card">
+      <h3>Gravity Peak (g)</h3>
+      <div class="metric-row"><span class="lbl">X</span><span class="val x" id="g-peak-x">—</span></div>
+      <div class="metric-row"><span class="lbl">Y</span><span class="val y" id="g-peak-y">—</span></div>
+      <div class="metric-row"><span class="lbl">Z</span><span class="val z" id="g-peak-z">—</span></div>
+    </div>
+
+    <div class="metric-card">
+      <h3>Crest Factor</h3>
+      <div class="metric-row"><span class="lbl">X</span><span class="val x" id="g-cf-x">—</span></div>
+      <div class="metric-row"><span class="lbl">Y</span><span class="val y" id="g-cf-y">—</span></div>
+      <div class="metric-row"><span class="lbl">Z</span><span class="val z" id="g-cf-z">—</span></div>
+    </div>
+
+    <div class="metric-card">
+      <h3>Skewness</h3>
+      <div class="metric-row"><span class="lbl">X</span><span class="val x" id="g-sk-x">—</span></div>
+      <div class="metric-row"><span class="lbl">Y</span><span class="val y" id="g-sk-y">—</span></div>
+      <div class="metric-row"><span class="lbl">Z</span><span class="val z" id="g-sk-z">—</span></div>
+    </div>
+
+    <div class="metric-card">
+      <h3>Kurtosis</h3>
+      <div class="metric-row"><span class="lbl">X</span><span class="val x" id="g-ku-x">—</span></div>
+      <div class="metric-row"><span class="lbl">Y</span><span class="val y" id="g-ku-y">—</span></div>
+      <div class="metric-row"><span class="lbl">Z</span><span class="val z" id="g-ku-z">—</span></div>
+    </div>
+
+    <div class="metric-card">
+      <h3>Primary Frequency (Hz)</h3>
+      <div class="metric-row"><span class="lbl">Gravity</span><span class="val freq" id="g-freq">—</span></div>
+      <div class="metric-row"><span class="lbl">Velocity</span><span class="val freq" id="v-freq">—</span></div>
+    </div>
+
+    <div class="metric-card">
+      <h3>Velocity RMS (mm/s)</h3>
+      <div class="metric-row"><span class="lbl">X</span><span class="val x" id="v-rms-x">—</span></div>
+      <div class="metric-row"><span class="lbl">Y</span><span class="val y" id="v-rms-y">—</span></div>
+      <div class="metric-row"><span class="lbl">Z</span><span class="val z" id="v-rms-z">—</span></div>
+    </div>
+
+  </div>
+
+  <!-- RMS trend chart -->
+  <div class="chart-card">
+    <h3>Gravity RMS — live trend (last 120 readings)</h3>
+    <canvas id="rms-chart"></canvas>
+  </div>
+
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+const MAX = 120;
+const labels = new Array(MAX).fill('');
+const rxData = new Array(MAX).fill(null);
+const ryData = new Array(MAX).fill(null);
+const rzData = new Array(MAX).fill(null);
+
+const rmsChart = new Chart(document.getElementById('rms-chart'), {
+  type: 'line',
+  data: {
+    labels,
+    datasets: [
+      { label: 'RMS X', data: rxData, borderColor: '#ef4444', borderWidth: 1.5, pointRadius: 0, tension: 0.2, fill: false },
+      { label: 'RMS Y', data: ryData, borderColor: '#22c55e', borderWidth: 1.5, pointRadius: 0, tension: 0.2, fill: false },
+      { label: 'RMS Z', data: rzData, borderColor: '#3b82f6', borderWidth: 1.5, pointRadius: 0, tension: 0.2, fill: false },
+    ]
+  },
+  options: {
+    animation: false,
+    responsive: true,
+    interaction: { mode: 'index', intersect: false },
+    scales: {
+      x: { display: false },
+      y: { title: { display: true, text: 'g', color: '#888' }, grid: { color: '#2a2a2a' }, ticks: { color: '#888' } }
+    },
+    plugins: {
+      legend: { labels: { color: '#ccc', boxWidth: 12 } }
+    }
+  }
+});
+
+function s(id, v) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = v;
+}
+function fmt(v, d = 3) { return v != null ? v.toFixed(d) : '—'; }
+
+const ws = new WebSocket(`ws://${location.host}/stream/metrics`);
+const statusEl = document.getElementById('ws-status');
+
+ws.onopen  = () => { statusEl.textContent = 'Connected'; statusEl.className = 'ws-status ok'; };
+ws.onclose = () => { statusEl.textContent = 'Disconnected'; statusEl.className = 'ws-status err'; };
+ws.onerror = () => { statusEl.textContent = 'Error'; statusEl.className = 'ws-status err'; };
+
+ws.onmessage = ({ data }) => {
+  const msg = JSON.parse(data);
+  if (msg.type !== 'metrics') return;
+
+  const g = msg.gravity;
+  const v = msg.velocity;
+
+  s('m-temp',   fmt(msg.temperature, 1) + ' °C');
+
+  s('g-rms-x',  fmt(g.rms.x));
+  s('g-rms-y',  fmt(g.rms.y));
+  s('g-rms-z',  fmt(g.rms.z));
+  s('g-peak-x', fmt(g.peak.x));
+  s('g-peak-y', fmt(g.peak.y));
+  s('g-peak-z', fmt(g.peak.z));
+  s('g-cf-x',   fmt(g.crestFactor.x));
+  s('g-cf-y',   fmt(g.crestFactor.y));
+  s('g-cf-z',   fmt(g.crestFactor.z));
+  s('g-sk-x',   fmt(g.skewness.x));
+  s('g-sk-y',   fmt(g.skewness.y));
+  s('g-sk-z',   fmt(g.skewness.z));
+  s('g-ku-x',   fmt(g.kurtosis.x));
+  s('g-ku-y',   fmt(g.kurtosis.y));
+  s('g-ku-z',   fmt(g.kurtosis.z));
+  s('g-freq',   fmt(g.primaryFrequency, 1) + ' Hz');
+
+  s('v-rms-x',  fmt(v.rms.x));
+  s('v-rms-y',  fmt(v.rms.y));
+  s('v-rms-z',  fmt(v.rms.z));
+  s('v-freq',   fmt(v.primaryFrequency, 1) + ' Hz');
+
+  // Append to RMS trend chart
+  rxData.push(g.rms.x); ryData.push(g.rms.y); rzData.push(g.rms.z);
+  labels.push('');
+  if (rxData.length > MAX) { rxData.shift(); ryData.shift(); rzData.shift(); labels.shift(); }
+  rmsChart.update('none');
+};
+</script>
+{% endblock %}

@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div style="padding: 2rem 0;">
+
+  <div class="page-header">
+    <a href="/" class="btn btn-info">← Dashboard</a>
+    <h1 class="page-title">Latest Raw Reading</h1>
+    <span class="badge" id="poll-badge">
+      <span class="badge-dot"></span>
+      Connecting…
+    </span>
+  </div>
+
+  <div class="display-grid">
+    <div class="display-card x">
+      <div class="display-axis">X Axis</div>
+      <div class="display-value" id="val-x">—</div>
+      <div class="display-unit">g</div>
+    </div>
+    <div class="display-card y">
+      <div class="display-axis">Y Axis</div>
+      <div class="display-value" id="val-y">—</div>
+      <div class="display-unit">g</div>
+    </div>
+    <div class="display-card z">
+      <div class="display-axis">Z Axis</div>
+      <div class="display-value" id="val-z">—</div>
+      <div class="display-unit">g</div>
+    </div>
+  </div>
+
+  <div class="data-footer">
+    <span id="footer-ts">—</span>
+    <span>Refreshes every 500 ms</span>
+  </div>
+
+</div>
+
+<script>
+const badge  = document.getElementById('poll-badge');
+const dot    = badge.querySelector('.badge-dot');
+const tsEl   = document.getElementById('footer-ts');
+
+function fmt(v) {
+  if (v == null) return '—';
+  const sign = v < 0 ? '−' : '+';
+  return sign + Math.abs(v).toFixed(4);
+}
+
+function setOk() {
+  badge.className = 'badge ok';
+  badge.lastChild.textContent = ' Connected';
+}
+
+function setErr(msg) {
+  badge.className = 'badge err';
+  badge.lastChild.textContent = ' ' + (msg || 'Error');
+}
+
+async function poll() {
+  try {
+    const res = await fetch('/read/latest-raw');
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      setErr(j.error || ('HTTP ' + res.status));
+      return;
+    }
+    const d = await res.json();
+    document.getElementById('val-x').textContent = fmt(d.x);
+    document.getElementById('val-y').textContent = fmt(d.y);
+    document.getElementById('val-z').textContent = fmt(d.z);
+    tsEl.textContent = 'Last: ' + new Date(d.timestamp).toLocaleTimeString([], {
+      hour: '2-digit', minute: '2-digit', second: '2-digit', fractionalSecondDigits: 3
+    });
+    setOk();
+  } catch (e) {
+    setErr('Offline');
+  }
+}
+
+poll();
+setInterval(poll, 500);
+</script>
+{% endblock %}

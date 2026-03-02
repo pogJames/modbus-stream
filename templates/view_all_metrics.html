@@ -1,0 +1,190 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div style="padding: 2rem 0;">
+
+  <div class="page-header">
+    <a href="/" class="btn btn-info">← Dashboard</a>
+    <h1 class="page-title">Sensor Metrics</h1>
+    <span class="badge" id="poll-badge">
+      <span class="badge-dot"></span>
+      Connecting…
+    </span>
+  </div>
+
+  <!-- Temperature -->
+  <div class="temp-section">
+    <span class="temp-label">Temperature</span>
+    <span class="temp-value" id="m-temp">—</span>
+    <span style="font-size:0.8rem;color:var(--muted-foreground)">°C</span>
+  </div>
+
+  <!-- Gravity Analysis -->
+  <div style="margin-bottom:1.75rem;">
+    <div class="section-label">Gravity Analysis</div>
+    <div class="metric-grid">
+
+      <div class="metric-card">
+        <div class="metric-card-title">RMS (g)</div>
+        <div class="metric-row"><span class="metric-axis">X</span><span class="metric-val x" id="g-rms-x">—</span></div>
+        <div class="metric-row"><span class="metric-axis">Y</span><span class="metric-val y" id="g-rms-y">—</span></div>
+        <div class="metric-row"><span class="metric-axis">Z</span><span class="metric-val z" id="g-rms-z">—</span></div>
+      </div>
+
+      <div class="metric-card">
+        <div class="metric-card-title">Peak (g)</div>
+        <div class="metric-row"><span class="metric-axis">X</span><span class="metric-val x" id="g-pk-x">—</span></div>
+        <div class="metric-row"><span class="metric-axis">Y</span><span class="metric-val y" id="g-pk-y">—</span></div>
+        <div class="metric-row"><span class="metric-axis">Z</span><span class="metric-val z" id="g-pk-z">—</span></div>
+      </div>
+
+      <div class="metric-card">
+        <div class="metric-card-title">Crest Factor</div>
+        <div class="metric-row"><span class="metric-axis">X</span><span class="metric-val x" id="g-cf-x">—</span></div>
+        <div class="metric-row"><span class="metric-axis">Y</span><span class="metric-val y" id="g-cf-y">—</span></div>
+        <div class="metric-row"><span class="metric-axis">Z</span><span class="metric-val z" id="g-cf-z">—</span></div>
+      </div>
+
+      <div class="metric-card">
+        <div class="metric-card-title">Skewness</div>
+        <div class="metric-row"><span class="metric-axis">X</span><span class="metric-val x" id="g-sk-x">—</span></div>
+        <div class="metric-row"><span class="metric-axis">Y</span><span class="metric-val y" id="g-sk-y">—</span></div>
+        <div class="metric-row"><span class="metric-axis">Z</span><span class="metric-val z" id="g-sk-z">—</span></div>
+      </div>
+
+      <div class="metric-card">
+        <div class="metric-card-title">Kurtosis</div>
+        <div class="metric-row"><span class="metric-axis">X</span><span class="metric-val x" id="g-ku-x">—</span></div>
+        <div class="metric-row"><span class="metric-axis">Y</span><span class="metric-val y" id="g-ku-y">—</span></div>
+        <div class="metric-row"><span class="metric-axis">Z</span><span class="metric-val z" id="g-ku-z">—</span></div>
+      </div>
+
+      <div class="metric-card metric-card-scalar" style="justify-content:flex-start;">
+        <div class="metric-card-title" style="width:100%">Primary Freq</div>
+        <div style="flex:1;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:4px;">
+          <span class="metric-scalar-value" style="color:var(--amber)" id="g-freq">—</span>
+          <span style="font-size:0.7rem;color:var(--muted-foreground)">Hz</span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Velocity Analysis -->
+  <div style="margin-bottom:1.75rem;">
+    <div class="section-label">Velocity Analysis</div>
+    <div class="metric-grid">
+
+      <div class="metric-card">
+        <div class="metric-card-title">RMS (mm/s)</div>
+        <div class="metric-row"><span class="metric-axis">X</span><span class="metric-val x" id="v-rms-x">—</span></div>
+        <div class="metric-row"><span class="metric-axis">Y</span><span class="metric-val y" id="v-rms-y">—</span></div>
+        <div class="metric-row"><span class="metric-axis">Z</span><span class="metric-val z" id="v-rms-z">—</span></div>
+      </div>
+
+      <div class="metric-card">
+        <div class="metric-card-title">Peak (mm/s)</div>
+        <div class="metric-row"><span class="metric-axis">X</span><span class="metric-val x" id="v-pk-x">—</span></div>
+        <div class="metric-row"><span class="metric-axis">Y</span><span class="metric-val y" id="v-pk-y">—</span></div>
+        <div class="metric-row"><span class="metric-axis">Z</span><span class="metric-val z" id="v-pk-z">—</span></div>
+      </div>
+
+      <div class="metric-card">
+        <div class="metric-card-title">Crest Factor</div>
+        <div class="metric-row"><span class="metric-axis">X</span><span class="metric-val x" id="v-cf-x">—</span></div>
+        <div class="metric-row"><span class="metric-axis">Y</span><span class="metric-val y" id="v-cf-y">—</span></div>
+        <div class="metric-row"><span class="metric-axis">Z</span><span class="metric-val z" id="v-cf-z">—</span></div>
+      </div>
+
+      <div class="metric-card metric-card-scalar" style="justify-content:flex-start;">
+        <div class="metric-card-title" style="width:100%">Primary Freq</div>
+        <div style="flex:1;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:4px;">
+          <span class="metric-scalar-value" style="color:var(--amber)" id="v-freq">—</span>
+          <span style="font-size:0.7rem;color:var(--muted-foreground)">Hz</span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="data-footer">
+    <span id="footer-ts">—</span>
+    <span>Refreshes every 1 s</span>
+  </div>
+
+</div>
+
+<script>
+const badge = document.getElementById('poll-badge');
+
+function fmt3(v) { return v != null ? v.toFixed(3) : '—'; }
+function fmt1(v) { return v != null ? v.toFixed(1) : '—'; }
+
+function s(id, v) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = v;
+}
+
+function setOk() {
+  badge.className = 'badge ok';
+  badge.lastChild.textContent = ' Connected';
+}
+
+function setErr(msg) {
+  badge.className = 'badge err';
+  badge.lastChild.textContent = ' ' + (msg || 'Error');
+}
+
+async function poll() {
+  try {
+    const [mRes, tRes] = await Promise.all([
+      fetch('/read/all-metrics'),
+      fetch('/read/temperature'),
+    ]);
+
+    if (!mRes.ok) {
+      const j = await mRes.json().catch(() => ({}));
+      setErr(j.error || ('HTTP ' + mRes.status));
+      return;
+    }
+
+    const m = await mRes.json();
+    const g = m.gravity;
+    const v = m.velocity;
+
+    // Gravity
+    s('g-rms-x', fmt3(g.rms.x));   s('g-rms-y', fmt3(g.rms.y));   s('g-rms-z', fmt3(g.rms.z));
+    s('g-pk-x',  fmt3(g.peak.x));  s('g-pk-y',  fmt3(g.peak.y));  s('g-pk-z',  fmt3(g.peak.z));
+    s('g-cf-x',  fmt3(g.crestFactor.x)); s('g-cf-y', fmt3(g.crestFactor.y)); s('g-cf-z', fmt3(g.crestFactor.z));
+    s('g-sk-x',  fmt3(g.skewness.x));  s('g-sk-y', fmt3(g.skewness.y));  s('g-sk-z', fmt3(g.skewness.z));
+    s('g-ku-x',  fmt3(g.kurtosis.x));  s('g-ku-y', fmt3(g.kurtosis.y));  s('g-ku-z', fmt3(g.kurtosis.z));
+    s('g-freq',  fmt1(g.primaryFrequency));
+
+    // Velocity
+    s('v-rms-x', fmt3(v.rms.x));   s('v-rms-y', fmt3(v.rms.y));   s('v-rms-z', fmt3(v.rms.z));
+    s('v-pk-x',  fmt3(v.peak.x));  s('v-pk-y',  fmt3(v.peak.y));  s('v-pk-z',  fmt3(v.peak.z));
+    s('v-cf-x',  fmt3(v.crestFactor.x)); s('v-cf-y', fmt3(v.crestFactor.y)); s('v-cf-z', fmt3(v.crestFactor.z));
+    s('v-freq',  fmt1(v.primaryFrequency));
+
+    // Timestamp
+    document.getElementById('footer-ts').textContent =
+      'Last: ' + new Date(m.timestamp).toLocaleTimeString([], {
+        hour: '2-digit', minute: '2-digit', second: '2-digit'
+      });
+
+    // Temperature (separate call, non-fatal)
+    if (tRes.ok) {
+      const t = await tRes.json();
+      s('m-temp', t.temperature != null ? t.temperature.toFixed(1) : '—');
+    }
+
+    setOk();
+  } catch (e) {
+    setErr('Offline');
+  }
+}
+
+poll();
+setInterval(poll, 1000);
+</script>
+{% endblock %}
