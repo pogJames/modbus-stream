@@ -108,7 +108,7 @@
 
   <div class="data-footer">
     <span id="footer-ts">—</span>
-    <span>Refreshes every 1 s</span>
+    <span id="footer-rate">Connecting…</span>
   </div>
 
 </div>
@@ -124,66 +124,52 @@ function s(id, v) {
   if (el) el.textContent = v;
 }
 
-function setOk() {
+const ws = new WebSocket(`ws://${location.host}/stream/metrics`);
+
+ws.onopen = () => {
   badge.className = 'badge ok';
   badge.lastChild.textContent = ' Connected';
-}
-
-function setErr(msg) {
+  document.getElementById('footer-rate').textContent = 'Live';
+};
+ws.onclose = () => {
   badge.className = 'badge err';
-  badge.lastChild.textContent = ' ' + (msg || 'Error');
-}
+  badge.lastChild.textContent = ' Disconnected';
+  document.getElementById('footer-rate').textContent = '—';
+};
+ws.onerror = () => {
+  badge.className = 'badge err';
+  badge.lastChild.textContent = ' Error';
+};
 
-async function poll() {
-  try {
-    const [mRes, tRes] = await Promise.all([
-      fetch('/read/all-metrics'),
-      fetch('/read/temperature'),
-    ]);
+ws.onmessage = ({ data }) => {
+  const msg = JSON.parse(data);
+  if (msg.type !== 'metrics') return;
 
-    if (!mRes.ok) {
-      const j = await mRes.json().catch(() => ({}));
-      setErr(j.error || ('HTTP ' + mRes.status));
-      return;
-    }
+  const g = msg.gravity;
+  const v = msg.velocity;
 
-    const m = await mRes.json();
-    const g = m.gravity;
-    const v = m.velocity;
+  // Gravity
+  s('g-rms-x', fmt3(g.rms.x));   s('g-rms-y', fmt3(g.rms.y));   s('g-rms-z', fmt3(g.rms.z));
+  s('g-pk-x',  fmt3(g.peak.x));  s('g-pk-y',  fmt3(g.peak.y));  s('g-pk-z',  fmt3(g.peak.z));
+  s('g-cf-x',  fmt3(g.crestFactor.x)); s('g-cf-y', fmt3(g.crestFactor.y)); s('g-cf-z', fmt3(g.crestFactor.z));
+  s('g-sk-x',  fmt3(g.skewness.x));  s('g-sk-y', fmt3(g.skewness.y));  s('g-sk-z', fmt3(g.skewness.z));
+  s('g-ku-x',  fmt3(g.kurtosis.x));  s('g-ku-y', fmt3(g.kurtosis.y));  s('g-ku-z', fmt3(g.kurtosis.z));
+  s('g-freq',  fmt1(g.primaryFrequency));
 
-    // Gravity
-    s('g-rms-x', fmt3(g.rms.x));   s('g-rms-y', fmt3(g.rms.y));   s('g-rms-z', fmt3(g.rms.z));
-    s('g-pk-x',  fmt3(g.peak.x));  s('g-pk-y',  fmt3(g.peak.y));  s('g-pk-z',  fmt3(g.peak.z));
-    s('g-cf-x',  fmt3(g.crestFactor.x)); s('g-cf-y', fmt3(g.crestFactor.y)); s('g-cf-z', fmt3(g.crestFactor.z));
-    s('g-sk-x',  fmt3(g.skewness.x));  s('g-sk-y', fmt3(g.skewness.y));  s('g-sk-z', fmt3(g.skewness.z));
-    s('g-ku-x',  fmt3(g.kurtosis.x));  s('g-ku-y', fmt3(g.kurtosis.y));  s('g-ku-z', fmt3(g.kurtosis.z));
-    s('g-freq',  fmt1(g.primaryFrequency));
+  // Velocity
+  s('v-rms-x', fmt3(v.rms.x));   s('v-rms-y', fmt3(v.rms.y));   s('v-rms-z', fmt3(v.rms.z));
+  s('v-pk-x',  fmt3(v.peak.x));  s('v-pk-y',  fmt3(v.peak.y));  s('v-pk-z',  fmt3(v.peak.z));
+  s('v-cf-x',  fmt3(v.crestFactor.x)); s('v-cf-y', fmt3(v.crestFactor.y)); s('v-cf-z', fmt3(v.crestFactor.z));
+  s('v-freq',  fmt1(v.primaryFrequency));
 
-    // Velocity
-    s('v-rms-x', fmt3(v.rms.x));   s('v-rms-y', fmt3(v.rms.y));   s('v-rms-z', fmt3(v.rms.z));
-    s('v-pk-x',  fmt3(v.peak.x));  s('v-pk-y',  fmt3(v.peak.y));  s('v-pk-z',  fmt3(v.peak.z));
-    s('v-cf-x',  fmt3(v.crestFactor.x)); s('v-cf-y', fmt3(v.crestFactor.y)); s('v-cf-z', fmt3(v.crestFactor.z));
-    s('v-freq',  fmt1(v.primaryFrequency));
+  // Temperature
+  s('m-temp', msg.temperature != null ? msg.temperature.toFixed(1) : '—');
 
-    // Timestamp
-    document.getElementById('footer-ts').textContent =
-      'Last: ' + new Date(m.timestamp).toLocaleTimeString([], {
-        hour: '2-digit', minute: '2-digit', second: '2-digit'
-      });
-
-    // Temperature (separate call, non-fatal)
-    if (tRes.ok) {
-      const t = await tRes.json();
-      s('m-temp', t.temperature != null ? t.temperature.toFixed(1) : '—');
-    }
-
-    setOk();
-  } catch (e) {
-    setErr('Offline');
-  }
-}
-
-poll();
-setInterval(poll, 1000);
+  // Timestamp
+  document.getElementById('footer-ts').textContent =
+    'Last: ' + new Date(msg.timestamp).toLocaleTimeString([], {
+      hour: '2-digit', minute: '2-digit', second: '2-digit'
+    });
+};
 </script>
 {% endblock %}

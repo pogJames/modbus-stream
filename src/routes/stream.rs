@@ -363,14 +363,13 @@ async fn handle_raw_websocket(mut socket: WebSocket, state: AppState) {
     info!("Raw data WebSocket connection closed");
 }
 
-/// Handle metrics WebSocket connection
+/// Handle metrics WebSocket connection — subscribes to the shared background reader in AppState.
 async fn handle_metrics_websocket(mut socket: WebSocket, state: AppState) {
     info!("New metrics WebSocket connection");
 
-    // Send initial status
     let status_message = match serde_json::to_string(&WebSocketMessage::Status {
         connected: true,
-        streaming: false,
+        streaming: true,
     }) {
         Ok(msg) => msg,
         Err(e) => {
@@ -380,80 +379,48 @@ async fn handle_metrics_websocket(mut socket: WebSocket, state: AppState) {
     };
 
     if socket.send(Message::Text(status_message.into())).await.is_err() {
-        error!("Failed to send initial status");
         return;
     }
 
-    // Create a stream manager for this connection
-    let stream_manager = Arc::new(StreamManager::new(state.modbus_client.clone()));
+    // Subscribe to the single shared metrics broadcast channel
+    let mut rx = state.metrics_tx.subscribe();
 
-    // Start metrics streaming
-    let (tx, mut rx) = broadcast::channel(100);
-    let stream_manager_clone = stream_manager.clone();
-
-    // Spawn task to periodically read metrics
-    let read_task = tokio::spawn(async move {
-        if let Err(e) = stream_manager_clone.start_metrics_streaming(tx).await {
-            error!("Metrics streaming task failed: {}", e);
-        }
-    });
-
-    // Handle WebSocket messages and forward stream data
     loop {
         tokio::select! {
-            // Handle incoming WebSocket messages
             msg = socket.next() => {
                 match msg {
                     Some(Ok(Message::Text(text))) => {
                         if text == "ping" {
                             if socket.send(Message::Text("pong".into())).await.is_err() {
-                                warn!("Failed to send pong");
                                 break;
                             }
                         }
                     }
-                    Some(Ok(Message::Close(_))) => {
-                        info!("WebSocket connection closed");
-                        break;
-                    }
-                    Some(Err(e)) => {
-                        error!("WebSocket error: {}", e);
-                        break;
-                    }
-                    None => break,
+                    Some(Ok(Message::Close(_))) | None => break,
+                    Some(Err(_)) => break,
                     _ => {}
                 }
             }
-            // Forward stream data to WebSocket
             data = rx.recv() => {
                 match data {
                     Ok(message) => {
-                        let json = match serde_json::to_string(&message) {
-                            Ok(json) => json,
-                            Err(e) => {
-                                error!("Failed to serialize message: {}", e);
-                                continue;
+                        match serde_json::to_string(&message) {
+                            Ok(json) => {
+                                if socket.send(Message::Text(json.into())).await.is_err() {
+                                    break;
+                                }
                             }
-                        };
-
-                        if socket.send(Message::Text(json.into())).await.is_err() {
-                            warn!("Failed to send data to WebSocket");
-                            break;
+                            Err(e) => error!("Failed to serialize metrics: {}", e),
                         }
                     }
-                    Err(broadcast::error::RecvError::Lagged(skipped)) => {
-                        warn!("WebSocket client lagging, skipped {} messages", skipped);
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        warn!("Metrics WebSocket lagged, skipped {} messages", n);
                     }
-                    Err(broadcast::error::RecvError::Closed) => {
-                        info!("Stream closed");
-                        break;
-                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
                 }
             }
         }
     }
 
-    // Clean up
-    read_task.abort();
     info!("Metrics WebSocket connection closed");
 }

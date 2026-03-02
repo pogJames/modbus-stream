@@ -49,8 +49,28 @@
   .range-card.y .range-val { color: #22c55e; }
   .range-card.z .range-val { color: #3b82f6; }
 
-  .range-card { cursor: pointer; user-select: none; transition: opacity 0.15s; }
+  .range-card { cursor: pointer; user-select: none; transition: opacity 0.15s; position: relative; }
   .range-card.hidden-axis { opacity: 0.35; }
+
+  .range-card[data-tooltip]::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 50%;
+    transform: translateX(-50%);
+    background: #18181b;
+    color: #e4e4e7;
+    font-size: 0.7rem;
+    font-weight: 500;
+    padding: 4px 8px;
+    border-radius: 4px;
+    white-space: nowrap;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.15s;
+    z-index: 10;
+  }
+  .range-card[data-tooltip]:hover::after { opacity: 1; }
 
   .chart-card {
     background: var(--background-white);
@@ -99,17 +119,17 @@
 
   <!-- Range display -->
   <div class="range-grid">
-    <div class="range-card x" data-axis="x">
+    <div class="range-card x" data-axis="x" data-tooltip="Click to show/hide X axis">
       <div class="axis-label">X Axis</div>
       <div class="range-row"><span class="range-label">min</span><span class="range-val" id="rng-x-min">—</span></div>
       <div class="range-row"><span class="range-label">max</span><span class="range-val" id="rng-x-max">—</span></div>
     </div>
-    <div class="range-card y" data-axis="y">
+    <div class="range-card y" data-axis="y" data-tooltip="Click to show/hide Y axis">
       <div class="axis-label">Y Axis</div>
       <div class="range-row"><span class="range-label">min</span><span class="range-val" id="rng-y-min">—</span></div>
       <div class="range-row"><span class="range-label">max</span><span class="range-val" id="rng-y-max">—</span></div>
     </div>
-    <div class="range-card z" data-axis="z">
+    <div class="range-card z" data-axis="z" data-tooltip="Click to show/hide Z axis">
       <div class="axis-label">Z Axis</div>
       <div class="range-row"><span class="range-label">min</span><span class="range-val" id="rng-z-min">—</span></div>
       <div class="range-row"><span class="range-label">max</span><span class="range-val" id="rng-z-max">—</span></div>
@@ -119,9 +139,9 @@
   <!-- Chart -->
   <div class="chart-card">
     <div class="chart-toolbar">
-      <span class="toolbar-label" id="window-label">Last 500 samples</span>
+      <span class="toolbar-label" id="window-label">Last 7812 samples</span>
       <input type="number" id="window-input" class="window-input"
-             value="500" min="10" max="50000" step="1"
+             value="7812" min="10" max="50000" step="1"
              title="Number of samples to display">
       <button id="pause-btn" class="btn btn-info" style="padding:4px 12px;font-size:0.8rem;">Pause</button>
     </div>
@@ -132,7 +152,7 @@
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script>
-let MAX_POINTS = 500;
+let MAX_POINTS = 7812;
 
 const xData  = new Array(MAX_POINTS).fill(null);
 const yData  = new Array(MAX_POINTS).fill(null);
@@ -180,7 +200,7 @@ function setWindow(n) {
 
 const windowInput = document.getElementById('window-input');
 windowInput.addEventListener('change', () => {
-  const n = Math.max(10, Math.min(50000, parseInt(windowInput.value, 10) || 500));
+  const n = Math.max(10, Math.min(50000, parseInt(windowInput.value, 10) || 7812));
   windowInput.value = n;
   setWindow(n);
 });

@@ -12,10 +12,11 @@ use minijinja_autoreload::AutoReloader;
 use serde::{Deserialize, Serialize};
 use std::{net::SocketAddr, path::Path, sync::Arc};
 use tokio::net::TcpListener;
+use tokio::sync::broadcast;
 use std::time::Duration;
 use tokio::time::{Instant, timeout};
 use tower_http::{cors::CorsLayer, services::ServeDir};
-use tracing::info;
+use tracing::{error, info};
 
 mod config;
 mod modbus;
@@ -56,6 +57,8 @@ pub struct AppState {
     config: Arc<AppConfig>,
     config_path: String,
     template_env: Arc<AutoReloader>,
+    /// Shared metrics broadcaster — one background reader, all WebSocket clients subscribe here.
+    pub metrics_tx: broadcast::Sender<types::WebSocketMessage>,
 }
 
 /// Lower the FTDI USB serial latency timer from 16ms → 1ms before opening the port.
@@ -260,12 +263,59 @@ async fn main() -> Result<()> {
         Ok(env)
     }));
 
+    let modbus_arc = Arc::new(tokio::sync::RwLock::new(modbus_client));
+
+    // Shared metrics broadcast channel (capacity 16 — clients only need the latest)
+    let (metrics_tx, _) = broadcast::channel::<types::WebSocketMessage>(16);
+
+    // Single shared background metrics reader — runs only when clients are subscribed
+    {
+        let mc = modbus_arc.clone();
+        let tx = metrics_tx.clone();
+        tokio::spawn(async move {
+            loop {
+                if tx.receiver_count() == 0 {
+                    tokio::time::sleep(Duration::from_millis(200)).await;
+                    continue;
+                }
+                let guard = mc.read().await;
+                match &*guard {
+                    Some(client) => {
+                        let grav = client.read_gravity_metrics().await;
+                        let vel  = client.read_velocity_metrics().await;
+                        let temp = client.read_temperature().await;
+                        drop(guard);
+                        match (grav, vel, temp) {
+                            (Ok(gravity), Ok(velocity), Ok(temperature)) => {
+                                let _ = tx.send(types::WebSocketMessage::Metrics {
+                                    timestamp: chrono::Utc::now(),
+                                    gravity,
+                                    velocity,
+                                    temperature,
+                                });
+                            }
+                            (Err(e), _, _) | (_, Err(e), _) | (_, _, Err(e)) => {
+                                error!("Background metrics read error: {}", e);
+                                tokio::time::sleep(Duration::from_millis(500)).await;
+                            }
+                        }
+                    }
+                    None => {
+                        drop(guard);
+                        tokio::time::sleep(Duration::from_millis(1000)).await;
+                    }
+                }
+            }
+        });
+    }
+
     // Create application state
     let state = AppState {
-        modbus_client: Arc::new(tokio::sync::RwLock::new(modbus_client)),
+        modbus_client: modbus_arc,
         config: Arc::new(config),
         config_path: args.config.clone(),
         template_env,
+        metrics_tx,
     };
 
     // Build our application with routes
