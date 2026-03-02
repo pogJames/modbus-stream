@@ -4,7 +4,6 @@
 <div style="padding: 2rem 0;">
 
   <div class="page-header">
-    <a href="/" class="btn btn-info">← Dashboard</a>
     <h1 class="page-title">Diagnostics</h1>
     <span class="badge" id="poll-badge">
       <span class="badge-dot"></span>
@@ -17,17 +16,8 @@
 
     <!-- Connection status -->
     <div class="card">
-      <div class="section-label">Connection</div>
-      <div style="display:flex; align-items:center; gap:0.75rem; margin-bottom:0.875rem;">
-        <span class="badge" id="conn-badge"><span class="badge-dot"></span> —</span>
-      </div>
-      <div id="conn-error" style="font-size:0.8rem; color:var(--red); display:none; margin-top:0.25rem;"></div>
-    </div>
-
-    <!-- Sensor info -->
-    <div class="card" id="sensor-card">
       <div class="section-label">Sensor</div>
-      <div id="sensor-content" style="display:grid; grid-template-columns:1fr 1fr; gap:0.625rem 1rem;">
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.625rem 1rem;">
         <div>
           <div style="font-size:0.65rem;color:var(--muted-foreground);text-transform:uppercase;letter-spacing:1px;margin-bottom:2px;">Model</div>
           <div style="font-weight:600;font-size:0.875rem;" id="s-model">—</div>
@@ -170,22 +160,6 @@ async function poll() {
     const res = await fetch('/diagnostics');
     if (!res.ok) { setErr('HTTP ' + res.status); return; }
     const d = await res.json();
-
-    // Connection
-    const connBadge = document.getElementById('conn-badge');
-    const connErr   = document.getElementById('conn-error');
-    if (d.connection?.connected) {
-      connBadge.className = 'badge ok';
-      connBadge.lastChild.textContent = ' Connected';
-      connErr.style.display = 'none';
-    } else {
-      connBadge.className = 'badge err';
-      connBadge.lastChild.textContent = ' ' + (d.connection?.status === 'no_device' ? 'No Device' : 'Error');
-      if (d.connection?.error) {
-        connErr.style.display = 'block';
-        connErr.textContent = d.connection.error;
-      }
-    }
 
     // Sensor
     const sens = d.sensor;
