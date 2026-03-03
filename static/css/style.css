@@ -566,7 +566,7 @@ a { color: inherit; text-decoration: none; }
   display: block;
 }
 
-.sensor-detail .value { font-weight: 600; font-size: 0.875rem; }
+.sensor-detail .value { font-family: 'JetBrains Mono', monospace; font-weight: 600; font-size: 0.875rem; }
 
 .last-updated { text-align: right; }
 .last-updated .label {

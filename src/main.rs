@@ -355,17 +355,43 @@ async fn main() -> Result<()> {
     // Single shared background metrics reader — runs only when clients are subscribed.
     // Skewness and kurtosis update every 2–5 s on the sensor (per datasheet), so they
     // are read on a slow path every 5 s and cached; all other metrics are read every cycle.
+    // Shared cache for skewness + kurtosis (updated every 5 s on a separate task).
+    let slow_cache: Arc<tokio::sync::Mutex<Option<(types::AccelerationData, types::AccelerationData)>>> =
+        Arc::new(tokio::sync::Mutex::new(None));
+
+    // Slow-path task: reads skewness + kurtosis every 5 s, but only when metrics
+    // clients are connected — skips entirely otherwise so the raw stream is never blocked.
+    {
+        let mc = modbus_arc.clone();
+        let cache = slow_cache.clone();
+        let tx = metrics_tx.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(5)).await;
+                if tx.receiver_count() == 0 {
+                    continue;
+                }
+                let guard = mc.read().await;
+                if let Some(client) = &*guard {
+                    match (client.read_gravity_skewness().await,
+                           client.read_gravity_kurtosis().await) {
+                        (Ok(s), Ok(k)) => { *cache.lock().await = Some((s, k)); }
+                        (Err(e), _) | (_, Err(e)) => {
+                            error!("Slow metrics read error: {}", e);
+                        }
+                    }
+                }
+                drop(guard);
+            }
+        });
+    }
+
+    // Fast-path task: reads 6 metrics every ~1 s, uses cached skew/kurt — no stutter.
     {
         let mc = modbus_arc.clone();
         let tx = metrics_tx.clone();
+        let cache = slow_cache;
         tokio::spawn(async move {
-            let mut cached_skew: Option<types::AccelerationData> = None;
-            let mut cached_kurt: Option<types::AccelerationData> = None;
-            // Force an immediate slow read on first cycle
-            let mut last_slow = std::time::Instant::now()
-                .checked_sub(Duration::from_secs(10))
-                .unwrap_or_else(std::time::Instant::now);
-
             loop {
                 if tx.receiver_count() == 0 {
                     tokio::time::sleep(Duration::from_millis(200)).await;
@@ -377,37 +403,18 @@ async fn main() -> Result<()> {
                 let guard = mc.read().await;
                 match &*guard {
                     Some(client) => {
-                        // Fast path — 9 reads (~810 ms at 115200 baud)
                         let g_rms  = client.read_gravity_rms().await;
                         let g_peak = client.read_gravity_peak().await;
                         let g_cf   = client.read_gravity_crest_factor().await;
                         let g_freq = client.read_gravity_primary_frequency().await;
                         let vel    = client.read_velocity_metrics().await;
                         let temp   = client.read_temperature().await;
-
-                        // Slow path — 2 reads, refreshed every 5 s
-                        if last_slow.elapsed() >= Duration::from_secs(5) || cached_skew.is_none() {
-                            match (client.read_gravity_skewness().await,
-                                   client.read_gravity_kurtosis().await) {
-                                (Ok(s), Ok(k)) => {
-                                    cached_skew = Some(s);
-                                    cached_kurt = Some(k);
-                                    last_slow = std::time::Instant::now();
-                                }
-                                (Err(e), _) | (_, Err(e)) => {
-                                    error!("Slow metrics read error: {}", e);
-                                }
-                            }
-                        }
-
                         drop(guard);
 
                         match (g_rms, g_peak, g_cf, g_freq, vel, temp) {
                             (Ok(rms), Ok(peak), Ok(crest_factor), Ok(primary_frequency),
                              Ok(velocity), Ok(temperature)) => {
-                                if let (Some(skewness), Some(kurtosis)) =
-                                    (cached_skew.clone(), cached_kurt.clone())
-                                {
+                                if let Some((skewness, kurtosis)) = cache.lock().await.clone() {
                                     let _ = tx.send(types::WebSocketMessage::Metrics {
                                         timestamp: chrono::Utc::now(),
                                         gravity: types::GravityMetrics {
@@ -422,7 +429,6 @@ async fn main() -> Result<()> {
                                         temperature,
                                     });
                                 }
-                                // Pace to 1 s per cycle regardless of how fast the reads were
                                 let elapsed = cycle_start.elapsed();
                                 if elapsed < Duration::from_secs(1) {
                                     tokio::time::sleep(Duration::from_secs(1) - elapsed).await;

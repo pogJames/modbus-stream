@@ -49,42 +49,6 @@
   .range-card.y .range-val { color: #22c55e; }
   .range-card.z .range-val { color: #3b82f6; }
 
-  .range-card { cursor: pointer; user-select: none; transition: opacity 0.15s; position: relative; }
-  .range-card.hidden-axis { opacity: 0.35; }
-
-  .range-card[data-tooltip]::after {
-    content: attr(data-tooltip);
-    position: absolute;
-    bottom: calc(100% + 8px);
-    left: 50%;
-    transform: translateX(-50%);
-    background: #18181b;
-    color: #e4e4e7;
-    font-size: 0.7rem;
-    font-weight: 500;
-    padding: 4px 8px;
-    border-radius: 4px;
-    white-space: nowrap;
-    pointer-events: none;
-    opacity: 0;
-    transition: opacity 0.15s;
-    z-index: 10;
-  }
-  .range-card[data-tooltip]::before {
-    content: '';
-    position: absolute;
-    bottom: calc(100% + 2px);
-    left: 50%;
-    transform: translateX(-50%);
-    border: 4px solid transparent;
-    border-top-color: #18181b;
-    pointer-events: none;
-    opacity: 0;
-    transition: opacity 0.15s;
-    z-index: 11;
-  }
-  .range-card[data-tooltip]:hover::after,
-  .range-card[data-tooltip]:hover::before { opacity: 1; }
 
   .chart-card {
     background: var(--background-white);
@@ -133,17 +97,17 @@
 
   <!-- Range display -->
   <div class="range-grid">
-    <div class="range-card x" data-axis="x" data-tooltip="Click to show/hide X axis">
+    <div class="range-card x">
       <div class="axis-label">X Axis</div>
       <div class="range-row"><span class="range-label">min</span><span class="range-val" id="rng-x-min">—</span></div>
       <div class="range-row"><span class="range-label">max</span><span class="range-val" id="rng-x-max">—</span></div>
     </div>
-    <div class="range-card y" data-axis="y" data-tooltip="Click to show/hide Y axis">
+    <div class="range-card y">
       <div class="axis-label">Y Axis</div>
       <div class="range-row"><span class="range-label">min</span><span class="range-val" id="rng-y-min">—</span></div>
       <div class="range-row"><span class="range-label">max</span><span class="range-val" id="rng-y-max">—</span></div>
     </div>
-    <div class="range-card z" data-axis="z" data-tooltip="Click to show/hide Z axis">
+    <div class="range-card z">
       <div class="axis-label">Z Axis</div>
       <div class="range-row"><span class="range-label">min</span><span class="range-val" id="rng-z-min">—</span></div>
       <div class="range-row"><span class="range-label">max</span><span class="range-val" id="rng-z-max">—</span></div>
@@ -195,7 +159,7 @@ const chart = new Chart(document.getElementById('chart'), {
         ticks: { color: '#888' }
       }
     },
-    plugins: { legend: { labels: { color: '#ccc', boxWidth: 12 } } }
+    plugins: { legend: { labels: { color: '#ccc', usePointStyle: true, pointStyle: 'circle' } } }
   }
 });
 
@@ -292,19 +256,6 @@ ws.onmessage = ({ data }) => {
     countEl.textContent = `${totalSamples.toLocaleString()} samples received`;
   }
 };
-
-// ── Axis toggle ───────────────────────────────────────────────
-const axisIndex = { x: 0, y: 1, z: 2 };
-
-document.querySelectorAll('.range-card[data-axis]').forEach(card => {
-  card.addEventListener('click', () => {
-    const idx = axisIndex[card.dataset.axis];
-    const ds = chart.data.datasets[idx];
-    ds.hidden = !ds.hidden;
-    card.classList.toggle('hidden-axis', ds.hidden);
-    chart.update('none');
-  });
-});
 
 // ── Pause / resume ────────────────────────────────────────────
 document.getElementById('pause-btn').addEventListener('click', function() {
