@@ -1,8 +1,8 @@
 use anyhow::Result;
 use axum::{
-    extract::{Query, State},
+    extract::{Path as AxumPath, Query, State},
     http::StatusCode,
-    response::{Html, IntoResponse, Json},
+    response::{Html, IntoResponse, Json, Redirect, Response},
     routing::{get, post, put, get_service},
     Router,
 };
@@ -218,6 +218,74 @@ async fn run_startup_diagnostics(
     }
 }
 
+// ── CSV viewer ────────────────────────────────────────────────────────────────
+
+const CSV_DATA_DIR: &str = "data";
+
+fn list_csv_files() -> Vec<String> {
+    let dir = std::path::PathBuf::from(CSV_DATA_DIR);
+    if !dir.exists() {
+        return vec![];
+    }
+    let mut files: Vec<String> = std::fs::read_dir(&dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().to_string();
+            if name.to_lowercase().ends_with(".csv") { Some(name) } else { None }
+        })
+        .collect();
+    files.sort();
+    files
+}
+
+fn is_safe_csv_filename(name: &str) -> bool {
+    !name.is_empty()
+        && !name.contains("..")
+        && !name.contains('/')
+        && !name.contains('\\')
+        && name.to_lowercase().ends_with(".csv")
+        && name.chars().all(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | '.'))
+}
+
+/// GET /view/csv — redirect to the first file, or show empty state.
+async fn csv_list_page(State(state): State<AppState>) -> Response {
+    let files = list_csv_files();
+    if let Some(first) = files.first().cloned() {
+        Redirect::to(&format!("/view/csv/{}", first)).into_response()
+    } else {
+        state.render_template("view_csv.html", "/view/csv", context! {
+            title => "CSV Viewer",
+            files => files,
+            current_file => "",
+        }).into_response()
+    }
+}
+
+/// GET /view/csv/:filename — render the canvas viewer for one CSV file.
+async fn csv_viewer_page(
+    AxumPath(filename): AxumPath<String>,
+    State(state): State<AppState>,
+) -> Response {
+    if !is_safe_csv_filename(&filename) {
+        return (StatusCode::BAD_REQUEST, Html("<p>Invalid filename</p>".to_string()))
+            .into_response();
+    }
+    if !std::path::PathBuf::from(CSV_DATA_DIR).join(&filename).exists() {
+        return (StatusCode::NOT_FOUND, Html("<p>File not found</p>".to_string()))
+            .into_response();
+    }
+    let files = list_csv_files();
+    state.render_template("view_csv.html", "/view/csv", context! {
+        title => format!("CSV — {}", filename),
+        files => files,
+        current_file => filename,
+    }).into_response()
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize tracing
@@ -268,34 +336,84 @@ async fn main() -> Result<()> {
     // Shared metrics broadcast channel (capacity 16 — clients only need the latest)
     let (metrics_tx, _) = broadcast::channel::<types::WebSocketMessage>(16);
 
-    // Single shared background metrics reader — runs only when clients are subscribed
+    // Single shared background metrics reader — runs only when clients are subscribed.
+    // Skewness and kurtosis update every 2–5 s on the sensor (per datasheet), so they
+    // are read on a slow path every 5 s and cached; all other metrics are read every cycle.
     {
         let mc = modbus_arc.clone();
         let tx = metrics_tx.clone();
         tokio::spawn(async move {
+            let mut cached_skew: Option<types::AccelerationData> = None;
+            let mut cached_kurt: Option<types::AccelerationData> = None;
+            // Force an immediate slow read on first cycle
+            let mut last_slow = std::time::Instant::now()
+                .checked_sub(Duration::from_secs(10))
+                .unwrap_or_else(std::time::Instant::now);
+
             loop {
                 if tx.receiver_count() == 0 {
                     tokio::time::sleep(Duration::from_millis(200)).await;
                     continue;
                 }
+
+                let cycle_start = tokio::time::Instant::now();
+
                 let guard = mc.read().await;
                 match &*guard {
                     Some(client) => {
-                        let grav = client.read_gravity_metrics().await;
-                        let vel  = client.read_velocity_metrics().await;
-                        let temp = client.read_temperature().await;
-                        drop(guard);
-                        match (grav, vel, temp) {
-                            (Ok(gravity), Ok(velocity), Ok(temperature)) => {
-                                let _ = tx.send(types::WebSocketMessage::Metrics {
-                                    timestamp: chrono::Utc::now(),
-                                    gravity,
-                                    velocity,
-                                    temperature,
-                                });
+                        // Fast path — 9 reads (~810 ms at 115200 baud)
+                        let g_rms  = client.read_gravity_rms().await;
+                        let g_peak = client.read_gravity_peak().await;
+                        let g_cf   = client.read_gravity_crest_factor().await;
+                        let g_freq = client.read_gravity_primary_frequency().await;
+                        let vel    = client.read_velocity_metrics().await;
+                        let temp   = client.read_temperature().await;
+
+                        // Slow path — 2 reads, refreshed every 5 s
+                        if last_slow.elapsed() >= Duration::from_secs(5) || cached_skew.is_none() {
+                            match (client.read_gravity_skewness().await,
+                                   client.read_gravity_kurtosis().await) {
+                                (Ok(s), Ok(k)) => {
+                                    cached_skew = Some(s);
+                                    cached_kurt = Some(k);
+                                    last_slow = std::time::Instant::now();
+                                }
+                                (Err(e), _) | (_, Err(e)) => {
+                                    error!("Slow metrics read error: {}", e);
+                                }
                             }
-                            (Err(e), _, _) | (_, Err(e), _) | (_, _, Err(e)) => {
-                                error!("Background metrics read error: {}", e);
+                        }
+
+                        drop(guard);
+
+                        match (g_rms, g_peak, g_cf, g_freq, vel, temp) {
+                            (Ok(rms), Ok(peak), Ok(crest_factor), Ok(primary_frequency),
+                             Ok(velocity), Ok(temperature)) => {
+                                if let (Some(skewness), Some(kurtosis)) =
+                                    (cached_skew.clone(), cached_kurt.clone())
+                                {
+                                    let _ = tx.send(types::WebSocketMessage::Metrics {
+                                        timestamp: chrono::Utc::now(),
+                                        gravity: types::GravityMetrics {
+                                            rms,
+                                            peak,
+                                            crest_factor,
+                                            skewness,
+                                            kurtosis,
+                                            primary_frequency,
+                                        },
+                                        velocity,
+                                        temperature,
+                                    });
+                                }
+                                // Pace to 1 s per cycle regardless of how fast the reads were
+                                let elapsed = cycle_start.elapsed();
+                                if elapsed < Duration::from_secs(1) {
+                                    tokio::time::sleep(Duration::from_secs(1) - elapsed).await;
+                                }
+                            }
+                            _ => {
+                                error!("Fast metrics read error");
                                 tokio::time::sleep(Duration::from_millis(500)).await;
                             }
                         }
@@ -382,10 +500,17 @@ async fn main() -> Result<()> {
         .route("/view/health", get(routes::view::health_page))
         .route("/view/diagnostics", get(routes::view::diagnostics_page))
 
+        // CSV viewer
+        .route("/view/csv", get(csv_list_page))
+        .route("/view/csv/{filename}", get(csv_viewer_page))
+
         // Static files and diagnostics
         .route("/diagnostics", get(routes::diagnostics::get_diagnostics))
         .nest_service("/static", get_service(ServeDir::new("static")).handle_error(|e| async move {
             (StatusCode::INTERNAL_SERVER_ERROR, format!("Error serving static file: {}", e))
+        }))
+        .nest_service("/data", get_service(ServeDir::new("data")).handle_error(|e| async move {
+            (StatusCode::INTERNAL_SERVER_ERROR, format!("Error serving data file: {}", e))
         }))
         
         .layer(CorsLayer::permissive())
@@ -441,6 +566,7 @@ fn url_for(name: &str, _args: Vec<minijinja::Value>) -> Result<minijinja::Value,
         "view_all_metrics"  => Ok(minijinja::Value::from("/view/all-metrics")),
         "view_health"       => Ok(minijinja::Value::from("/view/health")),
         "view_diagnostics"  => Ok(minijinja::Value::from("/view/diagnostics")),
+        "view_csv"          => Ok(minijinja::Value::from("/view/csv")),
         _ => Err(minijinja::Error::new(
             minijinja::ErrorKind::InvalidOperation,
             format!("unknown route: {}", name),

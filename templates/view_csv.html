@@ -1,0 +1,644 @@
+{% extends "base.html" %}
+
+{% block content %}
+<style>
+  /* ── Layout ──────────────────────────────────────────────── */
+  .csv-layout {
+    display: flex;
+    gap: 1rem;
+    padding: 1.5rem 0;
+    align-items: flex-start;
+  }
+
+  /* ── Sidebar ─────────────────────────────────────────────── */
+  .csv-sidebar {
+    width: 200px;
+    flex-shrink: 0;
+    background: var(--background-white);
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius);
+    overflow: hidden;
+    position: sticky;
+    top: 72px;
+  }
+
+  .csv-sidebar-header {
+    padding: 0.625rem 1rem;
+    border-bottom: 1px solid var(--border-color);
+    font-size: 0.65rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+  }
+
+  .csv-file-list {
+    list-style: none;
+    overflow-y: auto;
+    max-height: calc(100vh - 260px);
+  }
+
+  .csv-file-link {
+    display: block;
+    padding: 0.5rem 1rem;
+    font-size: 0.775rem;
+    color: var(--text-secondary);
+    border-bottom: 1px solid var(--border-color);
+    transition: var(--transition);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  .csv-file-link:last-child { border-bottom: none; }
+  .csv-file-link:hover { background: var(--background-light); color: var(--text-primary); }
+  .csv-file-link.active {
+    background: var(--background-light);
+    color: var(--text-primary);
+    font-weight: 600;
+    border-left: 2px solid var(--blue);
+    padding-left: calc(1rem - 2px);
+  }
+
+  .csv-sidebar-empty {
+    padding: 1rem;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    text-align: center;
+    line-height: 1.6;
+  }
+
+  /* ── Main ────────────────────────────────────────────────── */
+  .csv-main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  /* ── Stats row ───────────────────────────────────────────── */
+  .csv-stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 0.75rem;
+  }
+
+  .csv-stat-card {
+    background: var(--background-white);
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius);
+    padding: 0.875rem 1rem;
+  }
+
+  .csv-stat-label {
+    font-size: 0.65rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    margin-bottom: 0.375rem;
+  }
+
+  .csv-stat-value {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.875rem;
+    font-weight: 500;
+  }
+
+  .csv-stat-value.x { color: #ef4444; }
+  .csv-stat-value.y { color: #22c55e; }
+  .csv-stat-value.z { color: #3b82f6; }
+
+  /* ── Toolbar ─────────────────────────────────────────────── */
+  .csv-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .axis-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.3125rem 0.75rem;
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius);
+    font-size: 0.8125rem;
+    font-weight: 500;
+    font-family: inherit;
+    cursor: pointer;
+    transition: var(--transition);
+    background: var(--background-white);
+    color: var(--text-primary);
+  }
+
+  .axis-btn.x { border-color: #ef4444; color: #ef4444; }
+  .axis-btn.y { border-color: #22c55e; color: #22c55e; }
+  .axis-btn.z { border-color: #3b82f6; color: #3b82f6; }
+
+  .axis-btn.off {
+    opacity: 0.35;
+    border-color: var(--border-color);
+    color: var(--text-secondary);
+  }
+
+  .axis-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .axis-btn.x .axis-dot { background: #ef4444; }
+  .axis-btn.y .axis-dot { background: #22c55e; }
+  .axis-btn.z .axis-dot { background: #3b82f6; }
+
+  .window-ctrl {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-left: auto;
+  }
+
+  .window-ctrl label {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    font-weight: 500;
+  }
+
+  .window-input {
+    width: 96px;
+    padding: 0.3125rem 0.625rem;
+    font-size: 0.8rem;
+    font-family: 'JetBrains Mono', monospace;
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius);
+    background: var(--background-white);
+    color: var(--text-primary);
+    text-align: right;
+  }
+
+  .window-input:focus {
+    outline: none;
+    border-color: var(--blue);
+    box-shadow: 0 0 0 2px rgb(37 99 235 / 0.1);
+  }
+
+  /* ── Chart card ──────────────────────────────────────────── */
+  .csv-chart-card {
+    background: var(--background-white);
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius);
+    padding: 1.25rem;
+  }
+
+  .chart-area { position: relative; }
+
+  #csvChart { display: block; width: 100%; }
+
+  /* ── Slider ──────────────────────────────────────────────── */
+  .slider-wrap { margin-top: 1rem; }
+
+  .slider-info {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.72rem;
+    color: var(--text-secondary);
+    font-family: 'JetBrains Mono', monospace;
+    margin-bottom: 0.375rem;
+  }
+
+  #positionSlider {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 4px;
+    background: var(--border-color);
+    border-radius: 99px;
+    outline: none;
+    cursor: pointer;
+  }
+
+  #positionSlider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 16px;
+    height: 16px;
+    background: var(--blue);
+    border-radius: 50%;
+    cursor: grab;
+    box-shadow: var(--shadow-sm);
+  }
+
+  #positionSlider::-webkit-slider-thumb:active { cursor: grabbing; }
+
+  #positionSlider::-moz-range-thumb {
+    width: 16px;
+    height: 16px;
+    background: var(--blue);
+    border-radius: 50%;
+    border: none;
+    cursor: grab;
+  }
+
+  /* ── Tooltip ─────────────────────────────────────────────── */
+  .chart-tooltip {
+    position: absolute;
+    background: var(--background-white);
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius);
+    padding: 0.5rem 0.75rem;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.1s;
+    z-index: 10;
+    font-size: 0.8rem;
+    box-shadow: var(--shadow-md);
+  }
+
+  .tt-row {
+    margin: 2px 0;
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  /* ── Empty state ─────────────────────────────────────────── */
+  .csv-empty {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.75rem;
+    padding: 4rem;
+    background: var(--background-white);
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius);
+    color: var(--text-secondary);
+    text-align: center;
+  }
+
+  .csv-empty code {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.85rem;
+    background: var(--background-light);
+    padding: 2px 6px;
+    border-radius: 4px;
+  }
+</style>
+
+<div class="csv-layout">
+
+  <!-- Sidebar -->
+  <aside class="csv-sidebar">
+    <div class="csv-sidebar-header">CSV Files</div>
+    {% if files | length > 0 %}
+    <ul class="csv-file-list">
+      {% for file in files %}
+      <li>
+        <a href="/view/csv/{{ file }}"
+           class="csv-file-link{% if file == current_file %} active{% endif %}">
+          {{ file }}
+        </a>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <div class="csv-sidebar-empty">
+      No CSV files found.<br>Place files in <code>data/</code>
+    </div>
+    {% endif %}
+  </aside>
+
+  <!-- Main -->
+  <div class="csv-main">
+
+    {% if current_file %}
+
+    <!-- Stats (hidden until data loads) -->
+    <div class="csv-stats" id="statsRow" style="display:none">
+      <div class="csv-stat-card">
+        <div class="csv-stat-label">Total Samples</div>
+        <div class="csv-stat-value" id="statTotal">—</div>
+      </div>
+      <div class="csv-stat-card">
+        <div class="csv-stat-label">X Range</div>
+        <div class="csv-stat-value x" id="statX">—</div>
+      </div>
+      <div class="csv-stat-card">
+        <div class="csv-stat-label">Y Range</div>
+        <div class="csv-stat-value y" id="statY">—</div>
+      </div>
+      <div class="csv-stat-card">
+        <div class="csv-stat-label">Z Range</div>
+        <div class="csv-stat-value z" id="statZ">—</div>
+      </div>
+    </div>
+
+    <!-- Toolbar -->
+    <div class="csv-toolbar">
+      <button class="axis-btn x" data-axis="x"><span class="axis-dot"></span>X</button>
+      <button class="axis-btn y" data-axis="y"><span class="axis-dot"></span>Y</button>
+      <button class="axis-btn z" data-axis="z"><span class="axis-dot"></span>Z</button>
+      <div class="window-ctrl">
+        <label for="windowInput">Window</label>
+        <input type="number" id="windowInput" class="window-input"
+               value="7812" min="10" max="1000000">
+      </div>
+    </div>
+
+    <!-- Chart -->
+    <div class="csv-chart-card">
+      <div class="chart-area">
+        <canvas id="csvChart"></canvas>
+        <div class="chart-tooltip" id="chartTooltip"></div>
+      </div>
+      <div class="slider-wrap">
+        <div class="slider-info">
+          <span id="sliderLeft">0</span>
+          <span id="sliderMid">—</span>
+          <span id="sliderRight">0</span>
+        </div>
+        <input type="range" id="positionSlider" min="0" max="0" value="0">
+      </div>
+      <div class="sample-counter" id="sampleCounter">Loading…</div>
+    </div>
+
+    {% else %}
+
+    <div class="csv-empty">
+      <div style="font-size:2rem;opacity:0.2">&#9210;</div>
+      {% if files | length == 0 %}
+      <p>Place <code>.csv</code> files in the <code>data/</code> directory to view them here.</p>
+      {% else %}
+      <p>Select a file from the sidebar.</p>
+      {% endif %}
+    </div>
+
+    {% endif %}
+  </div>
+</div>
+
+{% if current_file %}
+<script>
+const FILE = "{{ current_file }}";
+
+// ── State ─────────────────────────────────────────────────────
+let data       = [];        // [{x, y, z}, ...]
+let viewStart  = 0;
+let windowSize = 7812;
+const vis      = { x: true, y: true, z: true };
+
+const COLORS = { x: '#ef4444', y: '#22c55e', z: '#3b82f6' };
+
+// ── DOM refs ──────────────────────────────────────────────────
+const canvas      = document.getElementById('csvChart');
+const ctx         = canvas.getContext('2d');
+const tooltip     = document.getElementById('chartTooltip');
+const slider      = document.getElementById('positionSlider');
+const windowInput = document.getElementById('windowInput');
+
+// ── Load & parse ──────────────────────────────────────────────
+async function loadCSV() {
+  try {
+    const r = await fetch(`/data/${FILE}`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    parseCSV(await r.text());
+  } catch (e) {
+    document.getElementById('sampleCounter').textContent = `Error loading file: ${e.message}`;
+  }
+}
+
+function parseCSV(text) {
+  const lines = text.trim().split('\n');
+  data = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
+    const parts = line.split(/[,;\t]+/).map(p => p.trim());
+    // skip header row
+    if (i === 0 && isNaN(parseFloat(parts[0]))) continue;
+    if (parts.length >= 3) {
+      const x = parseFloat(parts[0]);
+      const y = parseFloat(parts[1]);
+      const z = parseFloat(parts[2]);
+      if (!isNaN(x) && !isNaN(y) && !isNaN(z)) data.push({ x, y, z });
+    }
+  }
+  onLoaded();
+}
+
+function onLoaded() {
+  if (!data.length) {
+    document.getElementById('sampleCounter').textContent = 'No valid data found.';
+    return;
+  }
+
+  // Compute global Y extent with padding
+  let gMin = Infinity, gMax = -Infinity;
+  for (const d of data) {
+    gMin = Math.min(gMin, d.x, d.y, d.z);
+    gMax = Math.max(gMax, d.x, d.y, d.z);
+  }
+  const pad = (gMax - gMin) * 0.08 || 0.1;
+  canvas._gMin = gMin - pad;
+  canvas._gMax = gMax + pad;
+
+  // Stats
+  const xs = data.map(d => d.x), ys = data.map(d => d.y), zs = data.map(d => d.z);
+  const fmt = v => v.toFixed(4);
+  document.getElementById('statTotal').textContent = data.length.toLocaleString();
+  document.getElementById('statX').textContent = `${fmt(Math.min(...xs))} → ${fmt(Math.max(...xs))}`;
+  document.getElementById('statY').textContent = `${fmt(Math.min(...ys))} → ${fmt(Math.max(...ys))}`;
+  document.getElementById('statZ').textContent = `${fmt(Math.min(...zs))} → ${fmt(Math.max(...zs))}`;
+  document.getElementById('statsRow').style.display = 'grid';
+
+  // Init window & slider
+  windowSize = Math.min(windowSize, data.length);
+  windowInput.value = windowSize;
+  windowInput.max   = data.length;
+  viewStart = 0;
+  syncSlider();
+
+  document.getElementById('sampleCounter').textContent =
+    `${data.length.toLocaleString()} samples`;
+
+  requestAnimationFrame(drawChart);
+}
+
+// ── Slider sync ───────────────────────────────────────────────
+function syncSlider() {
+  const maxStart = Math.max(0, data.length - windowSize);
+  slider.max   = maxStart;
+  slider.value = Math.min(viewStart, maxStart);
+  viewStart    = parseInt(slider.value);
+  const end = Math.min(viewStart + windowSize, data.length);
+  document.getElementById('sliderLeft').textContent  = viewStart.toLocaleString();
+  document.getElementById('sliderMid').textContent   =
+    `${viewStart.toLocaleString()} – ${end.toLocaleString()}`;
+  document.getElementById('sliderRight').textContent = data.length.toLocaleString();
+}
+
+slider.addEventListener('input', () => {
+  viewStart = parseInt(slider.value);
+  syncSlider();
+  drawChart();
+});
+
+windowInput.addEventListener('change', () => {
+  let n = parseInt(windowInput.value) || 7812;
+  n = Math.max(10, Math.min(data.length || 10, n));
+  windowInput.value = n;
+  windowSize = n;
+  syncSlider();
+  drawChart();
+});
+
+// ── Draw ──────────────────────────────────────────────────────
+function drawChart() {
+  if (!data.length) return;
+
+  const container = canvas.parentElement;
+  const W = container.getBoundingClientRect().width;
+  const H = 380;
+  const dpr = window.devicePixelRatio || 1;
+
+  canvas.width  = W * dpr;
+  canvas.height = H * dpr;
+  canvas.style.width  = W + 'px';
+  canvas.style.height = H + 'px';
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.scale(dpr, dpr);
+
+  const pad = { top: 24, right: 16, bottom: 36, left: 58 };
+  const cW = W - pad.left - pad.right;
+  const cH = H - pad.top  - pad.bottom;
+
+  // Background
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, W, H);
+
+  const start = viewStart;
+  const end   = Math.min(viewStart + windowSize, data.length);
+  const count = end - start;
+  if (count < 2) return;
+
+  const gMin = canvas._gMin, gMax = canvas._gMax;
+  const scX = i => pad.left + ((i - start) / (count - 1)) * cW;
+  const scY = v => pad.top + cH - ((v - gMin) / (gMax - gMin)) * cH;
+
+  // Horizontal grid + Y labels
+  ctx.strokeStyle = '#e4e4e7';
+  ctx.lineWidth   = 1;
+  ctx.font        = '10px JetBrains Mono, monospace';
+  ctx.fillStyle   = '#71717a';
+  ctx.textAlign   = 'right';
+  const yTicks = 5;
+  for (let i = 0; i <= yTicks; i++) {
+    const y   = pad.top + (i / yTicks) * cH;
+    const val = gMax - (i / yTicks) * (gMax - gMin);
+    ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(W - pad.right, y); ctx.stroke();
+    ctx.fillText(val.toFixed(3), pad.left - 5, y + 3.5);
+  }
+
+  // Vertical grid + X labels
+  ctx.textAlign = 'center';
+  const xTicks = 8;
+  for (let i = 0; i <= xTicks; i++) {
+    const x   = pad.left + (i / xTicks) * cW;
+    const idx = Math.floor(start + (i / xTicks) * (count - 1));
+    ctx.beginPath(); ctx.moveTo(x, pad.top); ctx.lineTo(x, H - pad.bottom); ctx.stroke();
+    ctx.fillText(idx.toLocaleString(), x, H - pad.bottom + 14);
+  }
+
+  // X-axis label
+  ctx.font = '11px Inter, sans-serif';
+  ctx.fillText('Sample Index', W / 2, H - 3);
+
+  // Data lines — downsample to ~2× pixel width for performance
+  const stride = Math.max(1, Math.floor(count / (cW * 2)));
+  for (const axis of ['x', 'y', 'z']) {
+    if (!vis[axis]) continue;
+    ctx.strokeStyle = COLORS[axis];
+    ctx.lineWidth   = 1.5;
+    ctx.beginPath();
+    let first = true;
+    for (let i = start; i < end; i += stride) {
+      const px = scX(i), py = scY(data[i][axis]);
+      if (first) { ctx.moveTo(px, py); first = false; } else ctx.lineTo(px, py);
+    }
+    // always include last point
+    ctx.lineTo(scX(end - 1), scY(data[end - 1][axis]));
+    ctx.stroke();
+  }
+
+  canvas._info = { pad, cW, cH, W, H, start, end, count };
+}
+
+// ── Tooltip ───────────────────────────────────────────────────
+canvas.addEventListener('mousemove', e => {
+  if (!canvas._info || !data.length) return;
+  const { pad, cW, start, count } = canvas._info;
+  const rect = canvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+
+  if (mx < pad.left || mx > rect.width - pad.right ||
+      my < pad.top  || my > 380 - pad.bottom) {
+    tooltip.style.opacity = 0; return;
+  }
+
+  const idx = Math.round(start + ((mx - pad.left) / cW) * (count - 1));
+  if (idx < 0 || idx >= data.length) { tooltip.style.opacity = 0; return; }
+
+  const d = data[idx];
+  let html = `<div class="tt-row" style="color:var(--text-secondary)">#${idx.toLocaleString()}</div>`;
+  if (vis.x) html += `<div class="tt-row" style="color:${COLORS.x}">X: ${d.x.toFixed(5)}</div>`;
+  if (vis.y) html += `<div class="tt-row" style="color:${COLORS.y}">Y: ${d.y.toFixed(5)}</div>`;
+  if (vis.z) html += `<div class="tt-row" style="color:${COLORS.z}">Z: ${d.z.toFixed(5)}</div>`;
+  tooltip.innerHTML = html;
+  tooltip.style.opacity = 1;
+
+  let tx = mx + 12;
+  if (tx + 145 > rect.width) tx = mx - 155;
+  tooltip.style.left = tx + 'px';
+  tooltip.style.top  = (my - 10) + 'px';
+});
+
+canvas.addEventListener('mouseleave', () => { tooltip.style.opacity = 0; });
+
+// ── Axis toggles ──────────────────────────────────────────────
+document.querySelectorAll('.axis-btn[data-axis]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const ax = btn.dataset.axis;
+    vis[ax] = !vis[ax];
+    btn.classList.toggle('off', !vis[ax]);
+    drawChart();
+  });
+});
+
+// ── Keyboard navigation ───────────────────────────────────────
+document.addEventListener('keydown', e => {
+  if (!data.length) return;
+  const step     = Math.max(1, Math.floor(windowSize / 4));
+  const maxStart = Math.max(0, data.length - windowSize);
+  if      (e.key === 'ArrowLeft')  viewStart = Math.max(0, viewStart - step);
+  else if (e.key === 'ArrowRight') viewStart = Math.min(maxStart, viewStart + step);
+  else if (e.key === 'Home')       viewStart = 0;
+  else if (e.key === 'End')        viewStart = maxStart;
+  else return;
+  syncSlider();
+  drawChart();
+});
+
+// ── Resize ────────────────────────────────────────────────────
+window.addEventListener('resize', () => { if (data.length) drawChart(); });
+
+// ── Init ──────────────────────────────────────────────────────
+loadCSV();
+</script>
+{% endif %}
+
+{% endblock %}

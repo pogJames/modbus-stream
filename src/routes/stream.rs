@@ -26,7 +26,9 @@ impl StreamManager {
         Self { modbus_client }
     }
 
-    /// Start raw data streaming task
+    /// Start raw data streaming task — pipeline style (one combined read per round trip).
+    /// Uses the same technique as the vendor Python DAQ: reads FIFO size + data in a single
+    /// Modbus transaction starting at 0x0002, using the previous cycle's size as the count.
     async fn start_raw_streaming(
         &self,
         tx: broadcast::Sender<WebSocketMessage>,
@@ -34,45 +36,59 @@ impl StreamManager {
         info!("Starting raw data streaming");
 
         let mut sequence = 0u64;
-        let mut interval = interval(Duration::from_millis(10)); // 100 Hz max
+        // next_count: how many data registers to request on the next read.
+        // Seeded from the current FIFO fill level; updated each cycle from the
+        // buffer-size register that comes back with every combined read.
+        let mut next_count: u16 = 0;
 
         loop {
-            interval.tick().await;
+            let client_guard = self.modbus_client.read().await;
+            let client = match &*client_guard {
+                Some(c) => c,
+                None => {
+                    drop(client_guard);
+                    tokio::time::sleep(Duration::from_millis(1000)).await;
+                    continue;
+                }
+            };
 
-            match self.read_raw_data_batch().await {
-                Ok(data) => {
+            // One Modbus round trip: size register + data
+            let result: Result<(u16, Vec<_>)> = if next_count <= 6 {
+                // Buffer nearly empty — just refresh the size, skip data this cycle
+                client.read_fifo_buffer_size().await.map(|sz| (sz, vec![]))
+            } else {
+                let count = next_count.min(123);
+                client.read_fifo_combined(count).await
+            };
+
+            drop(client_guard);
+
+            match result {
+                Ok((new_size, data)) => {
+                    next_count = new_size;
+
+                    if data.is_empty() {
+                        // Buffer was too small; yield briefly then try again
+                        tokio::time::sleep(Duration::from_millis(1)).await;
+                        continue;
+                    }
+
                     let message = WebSocketMessage::RawData {
                         timestamp: Utc::now(),
                         sequence,
                         data,
                     };
 
-                    if let Err(e) = tx.send(message) {
-                        // All receivers dropped
-                        if matches!(e, broadcast::error::SendError(_)) {
-                            info!("All raw data receivers dropped, stopping stream");
-                            break;
-                        }
+                    if let Err(broadcast::error::SendError(_)) = tx.send(message) {
+                        info!("All raw data receivers dropped, stopping stream");
+                        break;
                     }
 
                     sequence += 1;
                 }
                 Err(e) => {
-                    error!("Failed to read raw data: {}", e);
-
-                    let error_message = WebSocketMessage::Error {
-                        message: format!("Failed to read raw data: {}", e),
-                        code: Some("RAW_DATA_READ_ERROR".to_string()),
-                    };
-
-                    if let Err(send_error) = tx.send(error_message) {
-                        if matches!(send_error, broadcast::error::SendError(_)) {
-                            info!("All receivers dropped, stopping stream");
-                            break;
-                        }
-                    }
-
-                    // Wait a bit before retrying
+                    error!("Raw data read failed: {}", e);
+                    next_count = 0;
                     tokio::time::sleep(Duration::from_millis(100)).await;
                 }
             }

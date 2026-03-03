@@ -364,16 +364,17 @@ impl UcidInfo {
         }
     }
 
-    /// Get the scale factor for converting raw sensor values to g's based on gain setting
+    /// Get the scale factor for converting raw sensor values to g's based on gain setting.
+    /// For a 16-bit signed ADC: counts_per_g = 32768 / full_scale_g
     pub fn scale_factor(&self) -> f64 {
         match self.gain.as_str() {
-            "2G" => 1.0 / 8192.0,
-            "4G" => 1.0 / 4096.0,
-            "8G" => 1.0 / 2048.0,
-            "16G" => 1.0 / 1024.0,
-            "32G" => 1.0 / 512.0,
-            "64G" => 1.0 / 256.0,
-            _ => 1.0 / 4096.0, // Default to 4G scale factor
+            "2G"  => 1.0 / 16384.0,
+            "4G"  => 1.0 / 8192.0,
+            "8G"  => 1.0 / 4096.0,
+            "16G" => 1.0 / 2048.0,
+            "32G" => 1.0 / 1024.0,
+            "64G" => 1.0 / 512.0,
+            _     => 1.0 / 8192.0, // Default to 4G (matches Python's hardcoded turn_gravity=8192)
         }
     }
 }

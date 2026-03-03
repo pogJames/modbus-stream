@@ -197,7 +197,7 @@ impl ModbusClient {
             }
             Err(e) => {
                 warn!("Failed to read UCID for scale factor, using default 4G: {}", e);
-                1.0 / 4096.0 // Default to 4G
+                1.0 / 8192.0 // Default to 4G (32768 / 4 = 8192 counts/g)
             }
         };
 
@@ -466,6 +466,34 @@ impl ModbusClient {
             chip_id,
             temperature,
         })
+    }
+
+    /// Read FIFO buffer size AND raw data in a single Modbus transaction.
+    /// Reads `1 + count` input registers starting at 0x0002 (FIFO_BUFFER_SIZE):
+    ///   result[0]   = updated FIFO fill level (use as `count` for the next call)
+    ///   result[1..] = `count` raw XYZ registers converted to AccelerationData
+    /// One round trip instead of two — same technique as the vendor's Python DAQ.
+    pub async fn read_fifo_combined(&self, count: u16) -> Result<(u16, Vec<AccelerationData>)> {
+        if count == 0 || count > 123 {
+            anyhow::bail!("count must be 1–123, got {}", count);
+        }
+
+        let regs = self
+            .read_input_registers(registers::FIFO_BUFFER_SIZE, 1 + count)
+            .await?;
+
+        let next_size = regs[0];
+        let scale_factor = self.get_scale_factor().await;
+
+        let mut samples = Vec::new();
+        for chunk in regs[1..].chunks_exact(3) {
+            let x = (chunk[0] as i16) as f64 * scale_factor;
+            let y = (chunk[1] as i16) as f64 * scale_factor;
+            let z = (chunk[2] as i16) as f64 * scale_factor;
+            samples.push(AccelerationData { x, y, z });
+        }
+
+        Ok((next_size, samples))
     }
 
     /// Read raw data buffer (up to 123 registers)
