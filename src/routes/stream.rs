@@ -73,6 +73,10 @@ impl StreamManager {
                         continue;
                     }
 
+                    // Downsample: keep only the middle sample per Modbus packet.
+                    // Reduces WebSocket payload and frontend RAM by ~41×.
+                    let data = vec![data[data.len() / 2].clone()];
+
                     let message = WebSocketMessage::RawData {
                         timestamp: Utc::now(),
                         sequence,
