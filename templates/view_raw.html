@@ -153,9 +153,9 @@
   <!-- Chart -->
   <div class="chart-card">
     <div class="chart-toolbar">
-      <span class="toolbar-label" id="window-label">Last 7812 samples</span>
+      <span class="toolbar-label" id="window-label">Last 4100 samples</span>
       <input type="number" id="window-input" class="window-input"
-             value="7812" min="10" max="50000" step="1"
+             value="4100" min="10" max="50000" step="1"
              title="Number of samples to display">
       <button id="pause-btn" class="btn btn-info" style="padding:4px 12px;font-size:0.8rem;">Pause</button>
     </div>
@@ -166,12 +166,12 @@
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script>
-let MAX_POINTS = 7812;
+let MAX_POINTS = 4100;
 
-const xData  = new Array(MAX_POINTS).fill(null);
-const yData  = new Array(MAX_POINTS).fill(null);
-const zData  = new Array(MAX_POINTS).fill(null);
-const labels = new Array(MAX_POINTS).fill('');
+const xData  = [];
+const yData  = [];
+const zData  = [];
+const labels = [];
 
 const chart = new Chart(document.getElementById('chart'), {
   type: 'line',

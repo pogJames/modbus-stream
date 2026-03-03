@@ -12,16 +12,6 @@
 
         <div class="dashboard-card">
             <div class="card-header">
-                <h3>Configuration</h3>
-            </div>
-            <div class="card-content">
-                <p>Configure sensor settings, connection parameters, and streaming options.</p>
-                <a href="/settings" class="btn btn-primary">Open Settings</a>
-            </div>
-        </div>
-
-        <div class="dashboard-card">
-            <div class="card-header">
                 <h3>Latest Data</h3>
             </div>
             <div class="card-content">
@@ -59,6 +49,29 @@
             </div>
         </div>
 
+        <div class="dashboard-card">
+            <div class="card-header">
+                <h3>Record Data</h3>
+            </div>
+            <div class="card-content">
+                <p>Capture 10 seconds of raw sensor data and save to a CSV file.</p>
+                <div id="rec-progress" style="display:none; margin:0.75rem 0 0.5rem;">
+                    <div style="display:flex; justify-content:space-between; font-size:0.75rem; color:var(--text-secondary); margin-bottom:0.3rem;">
+                        <span id="rec-label">0 / 78 120 samples</span>
+                        <span id="rec-pct">0%</span>
+                    </div>
+                    <div style="height:6px; background:var(--border-color); border-radius:3px; overflow:hidden;">
+                        <div id="rec-bar" style="height:100%; width:0%; background:var(--blue); border-radius:3px; transition:width 0.3s;"></div>
+                    </div>
+                </div>
+                <div id="rec-result" style="font-size:0.8rem; margin:0.5rem 0; color:var(--text-secondary);"></div>
+                <div class="card-actions">
+                    <button id="rec-btn" class="btn btn-info" onclick="startRecording()">Start Record</button>
+                    <a href="/view/csv" class="btn btn-info">CSV Viewer</a>
+                </div>
+            </div>
+        </div>
+
     </div>
 
     <div class="quick-status" hx-get="/settings/status" hx-trigger="load, every 10s">
@@ -69,4 +82,49 @@
     </div>
 
 </div>
+<script>
+let recPoll = null;
+
+function startRecording() {
+  fetch('/api/record/start', { method: 'POST' })
+    .then(r => r.json())
+    .then(d => {
+      if (!d.success) {
+        document.getElementById('rec-result').textContent = d.error || 'Failed to start';
+        return;
+      }
+      document.getElementById('rec-btn').disabled = true;
+      document.getElementById('rec-btn').textContent = 'Recording…';
+      document.getElementById('rec-progress').style.display = '';
+      document.getElementById('rec-result').textContent = '';
+      recPoll = setInterval(pollRecording, 400);
+    });
+}
+
+function pollRecording() {
+  fetch('/api/record/status')
+    .then(r => r.json())
+    .then(d => {
+      const pct = Math.round((d.samples / d.total) * 100);
+      document.getElementById('rec-label').textContent =
+        `${d.samples.toLocaleString()} / ${d.total.toLocaleString()} samples`;
+      document.getElementById('rec-pct').textContent = `${pct}%`;
+      document.getElementById('rec-bar').style.width = `${pct}%`;
+
+      if (!d.active) {
+        clearInterval(recPoll); recPoll = null;
+        document.getElementById('rec-btn').disabled = false;
+        document.getElementById('rec-btn').textContent = 'Start Recording';
+        document.getElementById('rec-progress').style.display = 'none';
+        if (d.filename) {
+          document.getElementById('rec-result').innerHTML =
+            `Saved: <a href="/view/csv/${d.filename}">${d.filename}</a>`;
+        }
+        if (d.error) {
+          document.getElementById('rec-result').textContent = `Error: ${d.error}`;
+        }
+      }
+    });
+}
+</script>
 {% endblock %}

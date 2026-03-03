@@ -51,6 +51,21 @@ struct Args {
     slave_id: u8,
 }
 
+#[derive(Clone, Serialize)]
+struct RecordingState {
+    active: bool,
+    samples: u64,
+    total: u64,
+    filename: Option<String>,
+    error: Option<String>,
+}
+
+impl Default for RecordingState {
+    fn default() -> Self {
+        Self { active: false, samples: 0, total: 78120, filename: None, error: None }
+    }
+}
+
 #[derive(Clone)]
 pub struct AppState {
     modbus_client: Arc<tokio::sync::RwLock<Option<ModbusClient>>>,
@@ -59,6 +74,7 @@ pub struct AppState {
     template_env: Arc<AutoReloader>,
     /// Shared metrics broadcaster — one background reader, all WebSocket clients subscribe here.
     pub metrics_tx: broadcast::Sender<types::WebSocketMessage>,
+    recording: Arc<tokio::sync::Mutex<RecordingState>>,
 }
 
 /// Lower the FTDI USB serial latency timer from 16ms → 1ms before opening the port.
@@ -434,6 +450,7 @@ async fn main() -> Result<()> {
         config_path: args.config.clone(),
         template_env,
         metrics_tx,
+        recording: Arc::new(tokio::sync::Mutex::new(RecordingState::default())),
     };
 
     // Build our application with routes
@@ -500,6 +517,10 @@ async fn main() -> Result<()> {
         .route("/view/health", get(routes::view::health_page))
         .route("/view/diagnostics", get(routes::view::diagnostics_page))
 
+        // Recording
+        .route("/api/record/start", post(record_start_handler))
+        .route("/api/record/status", get(record_status_handler))
+
         // CSV viewer
         .route("/view/csv", get(csv_list_page))
         .route("/view/csv/{filename}", get(csv_viewer_page))
@@ -531,6 +552,117 @@ async fn main() -> Result<()> {
 
     Ok(())
 }
+
+// ── Recording ─────────────────────────────────────────────────────────────────
+
+const RECORD_TARGET: u64 = 78120; // 10 seconds at 7812 Hz
+
+async fn record_start_handler(State(state): State<AppState>) -> impl IntoResponse {
+    let mut rec = state.recording.lock().await;
+    if rec.active {
+        return Json(serde_json::json!({ "success": false, "error": "Already recording" }));
+    }
+    rec.active = true;
+    rec.samples = 0;
+    rec.filename = None;
+    rec.error = None;
+    drop(rec);
+
+    let modbus = state.modbus_client.clone();
+    let recording = state.recording.clone();
+    tokio::spawn(async move { run_recording(modbus, recording).await });
+
+    Json(serde_json::json!({ "success": true }))
+}
+
+async fn record_status_handler(State(state): State<AppState>) -> impl IntoResponse {
+    let rec = state.recording.lock().await;
+    Json(rec.clone())
+}
+
+async fn run_recording(
+    modbus_client: Arc<tokio::sync::RwLock<Option<ModbusClient>>>,
+    recording: Arc<tokio::sync::Mutex<RecordingState>>,
+) {
+    use std::io::Write;
+
+    let filename = format!("record_{}.csv", chrono::Local::now().format("%Y%m%d_%H%M%S"));
+    let path = format!("{}/{}", CSV_DATA_DIR, filename);
+
+    let file = match std::fs::File::create(&path) {
+        Ok(f) => f,
+        Err(e) => {
+            let mut rec = recording.lock().await;
+            rec.active = false;
+            rec.error = Some(format!("Failed to create file: {}", e));
+            return;
+        }
+    };
+
+    {
+        let mut rec = recording.lock().await;
+        rec.filename = Some(filename.clone());
+    }
+
+    let mut writer = std::io::BufWriter::new(file);
+    let _ = writeln!(writer, "x,y,z");
+
+    let mut next_count: u16 = 0;
+    let mut total: u64 = 0;
+
+    loop {
+        if total >= RECORD_TARGET {
+            break;
+        }
+
+        let guard = modbus_client.read().await;
+        let client = match &*guard {
+            Some(c) => c,
+            None => {
+                drop(guard);
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                continue;
+            }
+        };
+
+        let result: anyhow::Result<(u16, Vec<types::AccelerationData>)> = if next_count <= 6 {
+            client.read_fifo_buffer_size().await.map(|sz| (sz, vec![]))
+        } else {
+            let count = next_count.min(123);
+            client.read_fifo_combined(count).await
+        };
+
+        drop(guard);
+
+        match result {
+            Ok((new_size, data)) => {
+                next_count = new_size;
+                if data.is_empty() {
+                    tokio::time::sleep(Duration::from_millis(1)).await;
+                    continue;
+                }
+                for sample in &data {
+                    if total >= RECORD_TARGET { break; }
+                    let _ = writeln!(writer, "{},{},{}", sample.x, sample.y, sample.z);
+                    total += 1;
+                }
+                recording.lock().await.samples = total;
+            }
+            Err(e) => {
+                error!("Recording read failed: {}", e);
+                next_count = 0;
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        }
+    }
+
+    let _ = writer.flush();
+    let mut rec = recording.lock().await;
+    rec.active = false;
+    rec.samples = total;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 async fn health_check() -> impl IntoResponse {
     Json(serde_json::json!({
