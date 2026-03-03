@@ -12,6 +12,29 @@
 
         <div class="dashboard-card">
             <div class="card-header">
+                <h3>Record Data</h3>
+            </div>
+            <div class="card-content">
+                <p>Capture 10 seconds of raw sensor data and save to a CSV file.</p>
+                <div id="rec-progress" style="display:none; margin:0.75rem 0 0.5rem;">
+                    <div style="display:flex; justify-content:space-between; font-size:0.75rem; color:var(--text-secondary); margin-bottom:0.3rem;">
+                        <span id="rec-label">0 / 78 120 samples</span>
+                        <span id="rec-pct">0%</span>
+                    </div>
+                    <div style="height:6px; background:var(--border-color); border-radius:3px; overflow:hidden;">
+                        <div id="rec-bar" style="height:100%; width:0%; background:var(--blue); border-radius:3px; transition:width 0.3s;"></div>
+                    </div>
+                </div>
+                <div id="rec-result" style="font-size:0.8rem; margin:0.5rem 0; color:var(--text-secondary);"></div>
+                <div class="card-actions">
+                    <button id="rec-btn" class="btn btn-info" onclick="startRecording()">Start Record</button>
+                    <a href="/view/csv" class="btn btn-info">CSV Viewer</a>
+                </div>
+            </div>
+        </div>
+
+        <div class="dashboard-card">
+            <div class="card-header">
                 <h3>Latest Data</h3>
             </div>
             <div class="card-content">
@@ -38,36 +61,13 @@
 
         <div class="dashboard-card">
             <div class="card-header">
-                <h3>System</h3>
+                <h3>System Information</h3>
             </div>
             <div class="card-content">
                 <p>System health, diagnostics, and API status information.</p>
                 <div class="card-actions">
                     <a href="/view/health" class="btn btn-info">Health</a>
                     <a href="/view/diagnostics" class="btn btn-info">Diagnostics</a>
-                </div>
-            </div>
-        </div>
-
-        <div class="dashboard-card">
-            <div class="card-header">
-                <h3>Record Data</h3>
-            </div>
-            <div class="card-content">
-                <p>Capture 10 seconds of raw sensor data and save to a CSV file.</p>
-                <div id="rec-progress" style="display:none; margin:0.75rem 0 0.5rem;">
-                    <div style="display:flex; justify-content:space-between; font-size:0.75rem; color:var(--text-secondary); margin-bottom:0.3rem;">
-                        <span id="rec-label">0 / 78 120 samples</span>
-                        <span id="rec-pct">0%</span>
-                    </div>
-                    <div style="height:6px; background:var(--border-color); border-radius:3px; overflow:hidden;">
-                        <div id="rec-bar" style="height:100%; width:0%; background:var(--blue); border-radius:3px; transition:width 0.3s;"></div>
-                    </div>
-                </div>
-                <div id="rec-result" style="font-size:0.8rem; margin:0.5rem 0; color:var(--text-secondary);"></div>
-                <div class="card-actions">
-                    <button id="rec-btn" class="btn btn-info" onclick="startRecording()">Start Record</button>
-                    <a href="/view/csv" class="btn btn-info">CSV Viewer</a>
                 </div>
             </div>
         </div>
