@@ -117,9 +117,9 @@
   <!-- Chart -->
   <div class="chart-card">
     <div class="chart-toolbar">
-      <span class="toolbar-label" id="window-label">Last 100 samples</span>
+      <span class="toolbar-label" id="window-label">Last 1000 samples</span>
       <input type="number" id="window-input" class="window-input"
-             value="100" min="10" max="3000" step="1"
+             value="1000" min="10" max="10000" step="1"
              title="Number of samples to display">
       <button id="pause-btn" class="btn btn-info" style="padding:4px 12px;font-size:0.8rem;">Pause</button>
     </div>
@@ -130,7 +130,7 @@
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script>
-let MAX_POINTS = 100;
+let MAX_POINTS = 1000;
 
 const xData  = [];
 const yData  = [];
@@ -178,7 +178,7 @@ function setWindow(n) {
 
 const windowInput = document.getElementById('window-input');
 windowInput.addEventListener('change', () => {
-  const n = Math.max(10, Math.min(3000, parseInt(windowInput.value, 10) || 100));
+  const n = Math.max(10, Math.min(10000, parseInt(windowInput.value, 10) || 100));
   windowInput.value = n;
   setWindow(n);
 });
