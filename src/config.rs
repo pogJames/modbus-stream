@@ -45,7 +45,7 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             server: ServerConfig {
-                host: "127.0.0.1".to_string(),
+                host: "0.0.0.0".to_string(),
                 port: 3000,
                 cors_origins: vec!["*".to_string()],
             },

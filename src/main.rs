@@ -35,7 +35,7 @@ struct Args {
     config: String,
 
     /// Server bind address
-    #[arg(short, long, default_value = "127.0.0.1:3000")]
+    #[arg(short, long, default_value = "0.0.0.0:3000")]
     bind: String,
 
     /// Modbus device path (e.g., /dev/ttyUSB0 or COM3)
