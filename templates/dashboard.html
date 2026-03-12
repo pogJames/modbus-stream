@@ -8,6 +8,35 @@
         <p class="dashboard-subtitle">Real-time tri-axial accelerometer monitoring</p>
     </header>
 
+    <!-- Per-sensor live metric cards -->
+    {% if sensors and sensors | length > 0 %}
+    <section style="margin-bottom:1.5rem;">
+        <h3 style="margin-bottom:0.75rem; color:var(--text-secondary); font-size:0.9rem; text-transform:uppercase; letter-spacing:0.05em;">Live Sensors</h3>
+        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(260px,1fr)); gap:1rem;">
+            {% for sensor in sensors %}
+            <div class="dashboard-card" id="sensor-card-{{ sensor.id }}">
+                <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
+                    <h3>{{ sensor.name }}</h3>
+                    <span id="sensor-{{ sensor.id }}-status" style="font-size:0.7rem; padding:2px 8px; border-radius:10px; background:var(--border-color); color:var(--text-secondary);">loading…</span>
+                </div>
+                <div class="card-content">
+                    <div style="font-size:0.75rem; color:var(--text-secondary); margin-bottom:0.5rem;">{{ sensor.device }}</div>
+                    <div id="sensor-{{ sensor.id }}-metrics" style="font-family:monospace; font-size:0.85rem; line-height:1.7;">
+                        <span style="color:var(--text-secondary);">RMS X/Y/Z:</span> <span id="s{{ sensor.id }}-rms">—</span><br>
+                        <span style="color:var(--text-secondary);">Peak X/Y/Z:</span> <span id="s{{ sensor.id }}-peak">—</span><br>
+                        <span style="color:var(--text-secondary);">Temp:</span> <span id="s{{ sensor.id }}-temp">—</span>
+                    </div>
+                    <div class="card-actions" style="margin-top:0.75rem;">
+                        <a href="/sensor/{{ sensor.id }}/view/raw" class="btn btn-info" style="font-size:0.8rem; padding:0.3rem 0.75rem;">Raw Stream</a>
+                        <a href="/sensor/{{ sensor.id }}/view/metrics" class="btn btn-info" style="font-size:0.8rem; padding:0.3rem 0.75rem;">Metrics</a>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </section>
+    {% endif %}
+
     <div class="dashboard-grid">
 
         <div class="dashboard-card">
@@ -25,6 +54,7 @@
                         <div id="rec-bar" style="height:100%; width:0%; background:var(--blue); border-radius:3px; transition:width 0.3s;"></div>
                     </div>
                 </div>
+                <div id="rec-sensor-list" style="font-size:0.8rem; margin:0.5rem 0; color:var(--text-secondary);"></div>
                 <div id="rec-result" style="font-size:0.8rem; margin:0.5rem 0; color:var(--text-secondary);"></div>
                 <div class="card-actions">
                     <button id="rec-btn" class="btn btn-info" onclick="startRecording()">Start Record</button>
@@ -42,19 +72,6 @@
                 <div class="card-actions">
                     <a href="/view/latest-raw" class="btn btn-info">Raw Data</a>
                     <a href="/view/all-metrics" class="btn btn-info">All Metrics</a>
-                </div>
-            </div>
-        </div>
-
-        <div class="dashboard-card">
-            <div class="card-header">
-                <h3>Live Streams</h3>
-            </div>
-            <div class="card-content">
-                <p>Connect to real-time data streams with live-updating charts.</p>
-                <div class="card-actions">
-                    <a href="/view/raw" class="btn btn-info">Raw Stream</a>
-                    <a href="/view/metrics" class="btn btn-info">Metrics Trend</a>
                 </div>
             </div>
         </div>
@@ -83,6 +100,37 @@
 
 </div>
 <script>
+// ── Per-sensor metric polling ──────────────────────────────────────────────────
+const sensorIds = [{% for sensor in sensors %}{{ sensor.id }}{% if not loop.last %},{% endif %}{% endfor %}];
+
+function pollSensorMetrics(id) {
+  fetch('/sensor/' + id + '/read/all-metrics')
+    .then(r => r.ok ? r.json() : null)
+    .then(d => {
+      const statusEl = document.getElementById('sensor-' + id + '-status');
+      if (!d) {
+        if (statusEl) { statusEl.textContent = 'offline'; statusEl.style.background = 'var(--red,#e55)'; statusEl.style.color = '#fff'; }
+        return;
+      }
+      if (statusEl) { statusEl.textContent = 'online'; statusEl.style.background = 'var(--green,#2a7)'; statusEl.style.color = '#fff'; }
+      const fmt = v => (v !== undefined && v !== null) ? v.toFixed(3) : '—';
+      const fmtAxes = a => a ? `${fmt(a.x)} / ${fmt(a.y)} / ${fmt(a.z)}` : '—';
+      const rmsEl = document.getElementById('s' + id + '-rms');
+      const peakEl = document.getElementById('s' + id + '-peak');
+      const tempEl = document.getElementById('s' + id + '-temp');
+      if (rmsEl && d.gravity) rmsEl.textContent = fmtAxes(d.gravity.rms);
+      if (peakEl && d.gravity) peakEl.textContent = fmtAxes(d.gravity.peak);
+      if (tempEl && d.temperature !== undefined) tempEl.textContent = d.temperature.toFixed(1) + ' °C';
+    })
+    .catch(() => {});
+}
+
+if (sensorIds.length > 0) {
+  sensorIds.forEach(id => pollSensorMetrics(id));
+  setInterval(() => sensorIds.forEach(id => pollSensorMetrics(id)), 2000);
+}
+
+// ── Recording ──────────────────────────────────────────────────────────────────
 let recPoll = null;
 
 function startRecording() {
@@ -105,23 +153,35 @@ function pollRecording() {
   fetch('/api/record/status')
     .then(r => r.json())
     .then(d => {
-      const pct = Math.round((d.samples / d.total) * 100);
+      // Sum samples across all sensors for overall progress
+      const totalSamples = (d.per_sensor || []).reduce((acc, s) => acc + (s.samples || 0), 0);
+      const numSensors = (d.per_sensor || []).length || 1;
+      const totalTarget = (d.total || 78120) * numSensors;
+      const pct = Math.round((totalSamples / totalTarget) * 100);
       document.getElementById('rec-label').textContent =
-        `${d.samples.toLocaleString()} / ${d.total.toLocaleString()} samples`;
+        `${totalSamples.toLocaleString()} / ${totalTarget.toLocaleString()} samples`;
       document.getElementById('rec-pct').textContent = `${pct}%`;
       document.getElementById('rec-bar').style.width = `${pct}%`;
+
+      // Per-sensor file list
+      const listEl = document.getElementById('rec-sensor-list');
+      if (listEl && d.per_sensor) {
+        listEl.innerHTML = d.per_sensor.map(s =>
+          `${s.filename}: ${(s.samples || 0).toLocaleString()} samples${s.complete ? ' ✓' : ''}${s.error ? ' ⚠ ' + s.error : ''}`
+        ).join('<br>');
+      }
 
       if (!d.active) {
         clearInterval(recPoll); recPoll = null;
         document.getElementById('rec-btn').disabled = false;
         document.getElementById('rec-btn').textContent = 'Start Recording';
         document.getElementById('rec-progress').style.display = 'none';
-        if (d.filename) {
-          document.getElementById('rec-result').innerHTML =
-            `Saved: <a href="/view/csv/${d.filename}">${d.filename}</a>`;
-        }
-        if (d.error) {
-          document.getElementById('rec-result').textContent = `Error: ${d.error}`;
+        if (d.per_sensor && d.per_sensor.length > 0) {
+          const links = d.per_sensor
+            .filter(s => s.filename && !s.error)
+            .map(s => `<a href="/view/csv/${s.filename}">${s.filename}</a>`)
+            .join(', ');
+          if (links) document.getElementById('rec-result').innerHTML = 'Saved: ' + links;
         }
       }
     });

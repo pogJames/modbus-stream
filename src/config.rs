@@ -5,7 +5,8 @@ use std::path::Path;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub server: ServerConfig,
-    pub modbus: ModbusConfig,
+    pub sensors: Vec<SensorConfig>,
+    pub discovery: DiscoveryConfig,
     pub streaming: StreamingConfig,
     pub logging: LoggingConfig,
 }
@@ -18,12 +19,45 @@ pub struct ServerConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ModbusConfig {
+pub struct SensorConfig {
+    pub name: String,
     pub device: String,
-    pub baud_rate: u32,
     pub slave_id: u8,
+    pub baud_rate: u32,
     pub timeout_ms: u64,
-    pub retry_attempts: u8,
+    pub enabled: bool,
+}
+
+impl Default for SensorConfig {
+    fn default() -> Self {
+        Self {
+            name: "Sensor 1".to_string(),
+            device: "/dev/ttyUSB0".to_string(),
+            slave_id: 1,
+            baud_rate: 115200,
+            timeout_ms: 5000,
+            enabled: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DiscoveryConfig {
+    pub auto_scan: bool,
+    pub slave_id: u8,
+    pub baud_rate: u32,
+    pub probe_timeout_ms: u64,
+}
+
+impl Default for DiscoveryConfig {
+    fn default() -> Self {
+        Self {
+            auto_scan: true,
+            slave_id: 1,
+            baud_rate: 115200,
+            probe_timeout_ms: 2000,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -49,13 +83,8 @@ impl Default for AppConfig {
                 port: 3000,
                 cors_origins: vec!["*".to_string()],
             },
-            modbus: ModbusConfig {
-                device: "/dev/ttyUSB0".to_string(),
-                baud_rate: 115200,
-                slave_id: 1,
-                timeout_ms: 5000,
-                retry_attempts: 3,
-            },
+            sensors: vec![SensorConfig::default()],
+            discovery: DiscoveryConfig::default(),
             streaming: StreamingConfig {
                 max_connections: 10,
                 buffer_size: 1024,
@@ -74,7 +103,6 @@ impl Default for AppConfig {
 impl AppConfig {
     pub fn load<P: AsRef<Path>>(path: P) -> Result<Self> {
         if !path.as_ref().exists() {
-            // Create default config file if it doesn't exist
             let default_config = Self::default();
             default_config.save(&path)?;
             tracing::info!("Created default configuration file at {:?}", path.as_ref());
@@ -93,24 +121,27 @@ impl AppConfig {
     }
 
     pub fn validate(&self) -> Result<()> {
-        // Validate server config
         if self.server.port == 0 {
             anyhow::bail!("Server port cannot be 0");
         }
 
-        // Validate modbus config
-        if self.modbus.slave_id == 0 {
-            anyhow::bail!("Modbus slave ID cannot be 0");
+        if self.sensors.len() > 4 {
+            anyhow::bail!("Maximum 4 sensors supported");
         }
 
-        if ![115200, 3000000].contains(&self.modbus.baud_rate) {
-            tracing::warn!(
-                "Unusual baud rate {}. Sensor supports 115200 or 3000000 bps",
-                self.modbus.baud_rate
-            );
+        for (i, sensor) in self.sensors.iter().enumerate() {
+            if sensor.slave_id == 0 {
+                anyhow::bail!("Sensor {} slave ID cannot be 0", i + 1);
+            }
+            if ![115200u32, 3000000].contains(&sensor.baud_rate) {
+                tracing::warn!(
+                    "Sensor {}: unusual baud rate {}. Supports 115200 or 3000000 bps",
+                    i + 1,
+                    sensor.baud_rate
+                );
+            }
         }
 
-        // Validate streaming config
         if self.streaming.max_connections == 0 {
             anyhow::bail!("Maximum connections cannot be 0");
         }
@@ -130,35 +161,6 @@ impl AppConfig {
     }
 }
 
-// Helper function to create a sample config.toml
-pub fn create_sample_config() -> String {
-    toml::to_string_pretty(&AppConfig::default()).unwrap_or_else(|_| {
-        r#"[server]
-host = "127.0.0.1"
-port = 3000
-cors_origins = ["*"]
-
-[modbus]
-device = "/dev/ttyUSB0"  # Use "COM3" on Windows
-baud_rate = 115200       # 115200 or 3000000 (3 Mbps for streaming)
-slave_id = 1
-timeout_ms = 5000
-retry_attempts = 3
-
-[streaming]
-max_connections = 10
-buffer_size = 1024
-metrics_update_rate_hz = 5.0
-raw_data_max_samples = 123
-websocket_ping_interval_sec = 30
-
-[logging]
-level = "info"
-format = "pretty"
-"#.to_string()
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -174,29 +176,29 @@ mod tests {
     fn test_config_save_load() {
         let temp_file = NamedTempFile::new().unwrap();
         let config = AppConfig::default();
-        
+
         config.save(temp_file.path()).unwrap();
         let loaded_config = AppConfig::load(temp_file.path()).unwrap();
-        
+
         assert_eq!(config.server.port, loaded_config.server.port);
-        assert_eq!(config.modbus.slave_id, loaded_config.modbus.slave_id);
+        assert_eq!(
+            config.sensors[0].slave_id,
+            loaded_config.sensors[0].slave_id
+        );
     }
 
     #[test]
     fn test_config_validation() {
         let mut config = AppConfig::default();
-        
-        // Test invalid port
+
         config.server.port = 0;
         assert!(config.validate().is_err());
-        
-        // Test invalid slave ID
+
         config.server.port = 3000;
-        config.modbus.slave_id = 0;
+        config.sensors[0].slave_id = 0;
         assert!(config.validate().is_err());
-        
-        // Test valid config
-        config.modbus.slave_id = 1;
+
+        config.sensors[0].slave_id = 1;
         assert!(config.validate().is_ok());
     }
 }
