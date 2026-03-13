@@ -1,7 +1,9 @@
 use axum::{
     extract::{Form, State},
+    http::StatusCode,
     response::{Html, IntoResponse},
 };
+use serde_json::json;
 use chrono::Utc;
 use minijinja::context;
 use std::collections::HashMap;
@@ -286,32 +288,36 @@ pub async fn validate_field_handler(
 // Helper functions
 
 async fn load_current_settings(state: &AppState) -> anyhow::Result<(SettingsForm, SettingsStatus)> {
+    // Load from config
     let settings = SettingsForm::from(&*state.config);
-
-    let (sensor_info, connection_status, status_class) = if let Some(sensor) = state.sensors.get(0) {
-        let client_guard = sensor.client.read().await;
-        match &*client_guard {
-            Some(client) => {
-                match client.test_connection().await {
-                    Ok(()) => {
-                        let sensor_info = match client.read_ucid().await {
-                            Ok(ucid) => Some(ucid),
-                            Err(e) => { warn!("Could not read sensor info: {}", e); None }
-                        };
-                        (sensor_info, "Connected".to_string(), "connected".to_string())
-                    }
-                    Err(e) => {
-                        warn!("Connection test error: {}", e);
-                        (None, "Error".to_string(), "error".to_string())
-                    }
+    
+    // Check if client is available and try to get current sensor info and status
+    let client_guard = state.modbus_client.read().await;
+    let (sensor_info, connection_status, status_class) = match &*client_guard {
+        Some(client) => {
+            match client.test_connection().await {
+                Ok(()) => {
+                    // Try to read sensor info
+                    let sensor_info = match client.read_ucid().await {
+                        Ok(ucid) => Some(ucid),
+                        Err(e) => {
+                            warn!("Could not read sensor info: {}", e);
+                            None
+                        }
+                    };
+                    (sensor_info, "Connected".to_string(), "connected".to_string())
+                }
+                Err(e) => {
+                    warn!("Connection test error: {}", e);
+                    (None, "Error".to_string(), "error".to_string())
                 }
             }
-            None => (None, "Not Connected".to_string(), "disconnected".to_string()),
         }
-    } else {
-        (None, "Not Connected".to_string(), "disconnected".to_string())
+        None => {
+            (None, "Not Connected".to_string(), "disconnected".to_string())
+        }
     };
-
+    
     let status = SettingsStatus {
         connection_status,
         status_class,
@@ -319,7 +325,7 @@ async fn load_current_settings(state: &AppState) -> anyhow::Result<(SettingsForm
         last_updated: Some(Utc::now()),
         unsaved_changes: false,
     };
-
+    
     Ok((settings, status))
 }
 
@@ -456,55 +462,52 @@ fn validate_settings(form: &SettingsForm) -> Result<(), ValidationErrors> {
 async fn apply_settings_to_system(state: &AppState, settings: &SettingsForm) -> anyhow::Result<Vec<String>> {
     let mut details = Vec::new();
 
-    let current_baud = state.config.sensors.first().map(|s| s.baud_rate).unwrap_or(115200);
-
-    if let Some(sensor) = state.sensors.get(0) {
-        let client_guard = sensor.client.read().await;
-        match &*client_guard {
-            Some(client) => {
-                if let Err(e) = client.set_sample_rate(settings.sample_rate).await {
-                    return Err(anyhow::anyhow!("Failed to set sample rate: {}", e));
-                }
-                details.push(format!("Sample rate set to {} sps", settings.sample_rate));
-
-                if let Err(e) = client.set_stream_size(settings.stream_size).await {
-                    return Err(anyhow::anyhow!("Failed to set stream size: {}", e));
-                }
-                details.push(format!("Stream size set to {} registers", settings.stream_size));
-
-                if let Err(e) = client.set_high_pass_filter(settings.high_pass_filter).await {
-                    return Err(anyhow::anyhow!("Failed to set high pass filter: {}", e));
-                }
-                details.push(format!("High pass filter: {}", if settings.high_pass_filter { "enabled" } else { "disabled" }));
-
-                if settings.baud_rate != current_baud {
-                    if let Err(e) = client.set_baud_rate(settings.baud_rate).await {
-                        return Err(anyhow::anyhow!("Failed to set baud rate: {}", e));
-                    }
-                    details.push(format!("Baud rate set to {} bps (requires power cycle)", settings.baud_rate));
-                }
-
-                client.clear_scale_factor_cache().await;
+    // Check if client is available
+    let client_guard = state.modbus_client.read().await;
+    match &*client_guard {
+        Some(client) => {
+            // Apply sensor settings via Modbus
+            if let Err(e) = client.set_sample_rate(settings.sample_rate).await {
+                return Err(anyhow::anyhow!("Failed to set sample rate: {}", e));
             }
-            None => return Err(anyhow::anyhow!("Modbus device not connected")),
+            details.push(format!("Sample rate set to {} sps", settings.sample_rate));
+
+            if let Err(e) = client.set_stream_size(settings.stream_size).await {
+                return Err(anyhow::anyhow!("Failed to set stream size: {}", e));
+            }
+            details.push(format!("Stream size set to {} registers", settings.stream_size));
+
+            if let Err(e) = client.set_high_pass_filter(settings.high_pass_filter).await {
+                return Err(anyhow::anyhow!("Failed to set high pass filter: {}", e));
+            }
+            details.push(format!("High pass filter: {}", if settings.high_pass_filter { "enabled" } else { "disabled" }));
+
+            // Handle baud rate change (requires special handling)
+            if settings.baud_rate != state.config.modbus.baud_rate {
+                if let Err(e) = client.set_baud_rate(settings.baud_rate).await {
+                    return Err(anyhow::anyhow!("Failed to set baud rate: {}", e));
+                }
+                details.push(format!("Baud rate set to {} bps (requires power cycle)", settings.baud_rate));
+            }
+
+            // Clear scale factor cache since sensor may have been reconfigured
+            client.clear_scale_factor_cache().await;
         }
-    } else {
-        return Err(anyhow::anyhow!("No sensors available"));
+        None => {
+            return Err(anyhow::anyhow!("Modbus device not connected"));
+        }
     }
 
-    // Update sensor 0 in the saved config
-    let mut new_sensors = state.config.sensors.clone();
-    if let Some(s) = new_sensors.first_mut() {
-        s.device = settings.device_path.clone();
-        s.baud_rate = settings.baud_rate;
-        s.slave_id = settings.slave_id;
-        s.timeout_ms = settings.timeout_ms;
-    }
-
+    // Update configuration file with new settings
     let new_config = AppConfig {
         server: state.config.server.clone(),
-        sensors: new_sensors,
-        discovery: state.config.discovery.clone(),
+        modbus: crate::config::ModbusConfig {
+            device: settings.device_path.clone(),
+            baud_rate: settings.baud_rate,
+            slave_id: settings.slave_id,
+            timeout_ms: settings.timeout_ms,
+            retry_attempts: settings.retry_attempts,
+        },
         streaming: crate::config::StreamingConfig {
             max_connections: settings.max_connections,
             buffer_size: settings.buffer_size,
@@ -527,14 +530,13 @@ async fn apply_settings_to_system(state: &AppState, settings: &SettingsForm) -> 
 }
 
 async fn test_connection_with_settings(state: &AppState, settings: &SettingsForm) -> anyhow::Result<String> {
-    let current = state.config.sensors.first();
-    let settings_differ = current.map(|s| {
-        settings.device_path != s.device
-            || settings.baud_rate != s.baud_rate
-            || settings.slave_id != s.slave_id
-    }).unwrap_or(true);
+    // Check if settings differ from current configuration
+    let settings_differ = settings.device_path != state.config.modbus.device
+        || settings.baud_rate != state.config.modbus.baud_rate
+        || settings.slave_id != state.config.modbus.slave_id;
 
     if settings_differ {
+        // Create a temporary connection with the new settings
         info!("Testing connection with new settings: {} @ {} bps, slave {}",
               settings.device_path, settings.baud_rate, settings.slave_id);
 
@@ -547,14 +549,13 @@ async fn test_connection_with_settings(state: &AppState, settings: &SettingsForm
                     }
                     Err(e) => Err(anyhow::anyhow!("Connection test failed with new settings: {}", e)),
                 }
+                // temp_client is dropped here, closing the temporary connection
             }
             Err(e) => Err(anyhow::anyhow!("Failed to connect with new settings: {}", e)),
         }
     } else {
-        let Some(sensor) = state.sensors.get(0) else {
-            return Err(anyhow::anyhow!("No sensors available"));
-        };
-        let client_guard = sensor.client.read().await;
+        // Test the existing connection
+        let client_guard = state.modbus_client.read().await;
         match &*client_guard {
             Some(client) => {
                 match client.test_connection().await {
@@ -571,25 +572,27 @@ async fn test_connection_with_settings(state: &AppState, settings: &SettingsForm
 }
 
 async fn reset_to_default_settings(state: &AppState) -> anyhow::Result<()> {
+    // Create and save default configuration
     let default_config = AppConfig::default();
     default_config.save(&state.config_path)?;
     info!("Configuration file reset to defaults");
 
-    if let Some(sensor) = state.sensors.get(0) {
-        let client_guard = sensor.client.read().await;
-        if let Some(client) = &*client_guard {
-            if let Err(e) = client.set_sample_rate(7812).await {
-                warn!("Failed to reset sample rate: {}", e);
-            }
-            if let Err(e) = client.set_stream_size(123).await {
-                warn!("Failed to reset stream size: {}", e);
-            }
-            if let Err(e) = client.set_high_pass_filter(false).await {
-                warn!("Failed to reset high pass filter: {}", e);
-            }
-            client.clear_scale_factor_cache().await;
-            info!("Sensor 0 settings reset to defaults");
+    // Reset sensor settings via Modbus if connected
+    let client_guard = state.modbus_client.read().await;
+    if let Some(client) = &*client_guard {
+        // Reset to default sensor settings
+        if let Err(e) = client.set_sample_rate(7812).await {
+            warn!("Failed to reset sample rate: {}", e);
         }
+        if let Err(e) = client.set_stream_size(123).await {
+            warn!("Failed to reset stream size: {}", e);
+        }
+        if let Err(e) = client.set_high_pass_filter(false).await {
+            warn!("Failed to reset high pass filter: {}", e);
+        }
+        // Clear scale factor cache
+        client.clear_scale_factor_cache().await;
+        info!("Sensor settings reset to defaults");
     }
 
     info!("Settings reset to defaults");

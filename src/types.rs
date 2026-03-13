@@ -162,14 +162,12 @@ pub struct StreamStatus {
 pub enum WebSocketMessage {
     #[serde(rename = "raw")]
     RawData {
-        sensor_id: usize,
         timestamp: DateTime<Utc>,
         sequence: u64,
         data: Vec<AccelerationData>,
     },
     #[serde(rename = "metrics")]
     Metrics {
-        sensor_id: usize,
         timestamp: DateTime<Utc>,
         gravity: GravityMetrics,
         velocity: VelocityMetrics,
@@ -316,16 +314,15 @@ impl ValidationErrors {
 
 impl From<&crate::config::AppConfig> for SettingsForm {
     fn from(config: &crate::config::AppConfig) -> Self {
-        let sensor = config.sensors.first().cloned().unwrap_or_default();
         Self {
-            device_path: sensor.device,
-            baud_rate: sensor.baud_rate,
-            slave_id: sensor.slave_id,
-            timeout_ms: sensor.timeout_ms,
-            retry_attempts: 3,
-            sample_rate: 7812,
-            stream_size: 123,
-            high_pass_filter: false,
+            device_path: config.modbus.device.clone(),
+            baud_rate: config.modbus.baud_rate,
+            slave_id: config.modbus.slave_id,
+            timeout_ms: config.modbus.timeout_ms,
+            retry_attempts: config.modbus.retry_attempts,
+            sample_rate: 7812, // Default, will be read from sensor
+            stream_size: 123,   // Default max
+            high_pass_filter: false, // Default
             max_connections: config.streaming.max_connections,
             buffer_size: config.streaming.buffer_size,
             metrics_update_rate_hz: config.streaming.metrics_update_rate_hz,

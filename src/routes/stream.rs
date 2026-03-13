@@ -1,40 +1,44 @@
 use axum::{
-    extract::{Path as AxumPath, State, WebSocketUpgrade, ws::{Message, WebSocket}},
+    extract::{State, WebSocketUpgrade, ws::{Message, WebSocket}},
     http::StatusCode,
-    response::{IntoResponse, Json, Response},
+    response::{IntoResponse, Json},
 };
-use futures::stream::StreamExt;
+use futures::{sink::SinkExt, stream::StreamExt};
 use std::{sync::Arc, time::Duration};
-use tokio::sync::{broadcast, RwLock};
-use tracing::{error, info, warn};
+use tokio::{sync::broadcast, time::interval};
+use tracing::{debug, error, info, warn};
 use anyhow::Result;
 use chrono::Utc;
 
 use crate::{
     modbus::ModbusClient,
-    types::{ErrorResponse, StreamStartRequest, StreamStatus, StreamType, WebSocketMessage},
+    types::{AccelerationData, ErrorResponse, StreamStartRequest, StreamStatus, StreamType, WebSocketMessage},
     AppState,
 };
 
-// ── StreamManager ──────────────────────────────────────────────────────────────
-
+// StreamManager implementation inlined
 struct StreamManager {
-    modbus_client: Arc<RwLock<Option<ModbusClient>>>,
+    modbus_client: Arc<tokio::sync::RwLock<Option<ModbusClient>>>,
 }
 
 impl StreamManager {
-    fn new(modbus_client: Arc<RwLock<Option<ModbusClient>>>) -> Self {
+    fn new(modbus_client: Arc<tokio::sync::RwLock<Option<ModbusClient>>>) -> Self {
         Self { modbus_client }
     }
 
+    /// Start raw data streaming task — pipeline style (one combined read per round trip).
+    /// Uses the same technique as the vendor Python DAQ: reads FIFO size + data in a single
+    /// Modbus transaction starting at 0x0002, using the previous cycle's size as the count.
     async fn start_raw_streaming(
         &self,
         tx: broadcast::Sender<WebSocketMessage>,
-        sensor_id: usize,
     ) -> Result<()> {
-        info!("Starting raw data streaming for sensor {}", sensor_id);
+        info!("Starting raw data streaming");
 
         let mut sequence = 0u64;
+        // next_count: how many data registers to request on the next read.
+        // Seeded from the current FIFO fill level; updated each cycle from the
+        // buffer-size register that comes back with every combined read.
         let mut next_count: u16 = 0;
 
         loop {
@@ -48,7 +52,9 @@ impl StreamManager {
                 }
             };
 
+            // One Modbus round trip: size register + data
             let result: Result<(u16, Vec<_>)> = if next_count <= 6 {
+                // Buffer nearly empty — just refresh the size, skip data this cycle
                 client.read_fifo_buffer_size().await.map(|sz| (sz, vec![]))
             } else {
                 let count = next_count.min(123);
@@ -62,16 +68,17 @@ impl StreamManager {
                     next_count = new_size;
 
                     if data.is_empty() {
+                        // Buffer was too small; yield briefly then try again
                         tokio::time::sleep(Duration::from_millis(1)).await;
                         continue;
                     }
 
+                    // Downsample: keep middle + last sample per Modbus packet.
                     let mid = data[data.len() / 2].clone();
                     let last = data[data.len() - 1].clone();
                     let data = if data.len() == 1 { vec![mid] } else { vec![mid, last] };
 
                     let message = WebSocketMessage::RawData {
-                        sensor_id,
                         timestamp: Utc::now(),
                         sequence,
                         data,
@@ -92,78 +99,134 @@ impl StreamManager {
             }
         }
 
+        info!("Raw data streaming stopped");
         Ok(())
+    }
+
+    /// Start metrics streaming task
+    async fn start_metrics_streaming(
+        &self,
+        tx: broadcast::Sender<WebSocketMessage>,
+    ) -> Result<()> {
+        info!("Starting metrics streaming");
+
+        let mut interval = interval(Duration::from_millis(200)); // 5 Hz
+
+        loop {
+            interval.tick().await;
+
+            match self.read_metrics_data().await {
+                Ok(message) => {
+                    if let Err(e) = tx.send(message) {
+                        // All receivers dropped
+                        if matches!(e, broadcast::error::SendError(_)) {
+                            info!("All metrics receivers dropped, stopping stream");
+                            break;
+                        }
+                    }
+                }
+                Err(e) => {
+                    error!("Failed to read metrics: {}", e);
+
+                    let error_message = WebSocketMessage::Error {
+                        message: format!("Failed to read metrics: {}", e),
+                        code: Some("METRICS_READ_ERROR".to_string()),
+                    };
+
+                    if let Err(send_error) = tx.send(error_message) {
+                        if matches!(send_error, broadcast::error::SendError(_)) {
+                            info!("All receivers dropped, stopping stream");
+                            break;
+                        }
+                    }
+
+                    // Wait a bit before retrying
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                }
+            }
+        }
+
+        info!("Metrics streaming stopped");
+        Ok(())
+    }
+
+    /// Read a batch of raw data from the sensor
+    async fn read_raw_data_batch(&self) -> Result<Vec<AccelerationData>> {
+        let client_guard = self.modbus_client.read().await;
+        match &*client_guard {
+            Some(client) => {
+                // Check FIFO buffer size first
+                let buffer_size = client.read_fifo_buffer_size().await?;
+
+                if buffer_size == 0 {
+                    debug!("FIFO buffer is empty");
+                    return Ok(vec![]);
+                }
+
+                // Read up to the buffer size or maximum registers (123)
+                let read_count = std::cmp::min(buffer_size, 123);
+                let raw_data = client.read_raw_data_buffer(read_count).await?;
+
+                debug!("Read {} raw data samples", raw_data.len());
+                Ok(raw_data)
+            }
+            None => Err(anyhow::anyhow!("Modbus device not connected")),
+        }
+    }
+
+    /// Read metrics data and create WebSocket message
+    async fn read_metrics_data(&self) -> Result<WebSocketMessage> {
+        let client_guard = self.modbus_client.read().await;
+        match &*client_guard {
+            Some(client) => {
+                // Read all metrics in parallel for better performance
+                let (gravity_result, velocity_result, temperature_result) = tokio::join!(
+                    client.read_gravity_metrics(),
+                    client.read_velocity_metrics(),
+                    client.read_temperature()
+                );
+
+                let gravity = gravity_result?;
+                let velocity = velocity_result?;
+                let temperature = temperature_result?;
+
+                Ok(WebSocketMessage::Metrics {
+                    timestamp: Utc::now(),
+                    gravity,
+                    velocity,
+                    temperature,
+                })
+            }
+            None => Err(anyhow::anyhow!("Modbus device not connected")),
+        }
     }
 }
 
-// ── Backwards-compat WebSocket handlers (sensor 0) ────────────────────────────
-
-pub async fn websocket_raw_handler_compat(
-    ws: WebSocketUpgrade,
-    State(state): State<AppState>,
-) -> Response {
-    let Some(sensor) = state.sensors.get(0) else {
-        return (StatusCode::SERVICE_UNAVAILABLE, "No sensors available").into_response();
-    };
-    let client = sensor.client.clone();
-    ws.on_upgrade(move |socket| handle_raw_websocket(socket, client, 0)).into_response()
-}
-
-pub async fn websocket_metrics_handler_compat(
-    ws: WebSocketUpgrade,
-    State(state): State<AppState>,
-) -> Response {
-    let Some(sensor) = state.sensors.get(0) else {
-        return (StatusCode::SERVICE_UNAVAILABLE, "No sensors available").into_response();
-    };
-    let metrics_tx = sensor.metrics_tx.clone();
-    ws.on_upgrade(move |socket| handle_metrics_websocket(socket, metrics_tx)).into_response()
-}
-
-// ── Per-sensor WebSocket handlers ─────────────────────────────────────────────
-
+/// WebSocket handler for raw data streaming
 pub async fn websocket_raw_handler(
-    AxumPath(sensor_id): AxumPath<usize>,
     ws: WebSocketUpgrade,
     State(state): State<AppState>,
-) -> Response {
-    let Some(sensor) = state.sensors.get(sensor_id) else {
-        return (StatusCode::NOT_FOUND, Json(ErrorResponse {
-            error: format!("Sensor {} not found", sensor_id),
-            code: Some("SENSOR_NOT_FOUND".to_string()),
-            timestamp: chrono::Utc::now(),
-        })).into_response();
-    };
-    let client = sensor.client.clone();
-    ws.on_upgrade(move |socket| handle_raw_websocket(socket, client, sensor_id)).into_response()
+) -> impl IntoResponse {
+    ws.on_upgrade(|socket| handle_raw_websocket(socket, state))
 }
 
+/// WebSocket handler for metrics streaming
 pub async fn websocket_metrics_handler(
-    AxumPath(sensor_id): AxumPath<usize>,
     ws: WebSocketUpgrade,
     State(state): State<AppState>,
-) -> Response {
-    let Some(sensor) = state.sensors.get(sensor_id) else {
-        return (StatusCode::NOT_FOUND, Json(ErrorResponse {
-            error: format!("Sensor {} not found", sensor_id),
-            code: Some("SENSOR_NOT_FOUND".to_string()),
-            timestamp: chrono::Utc::now(),
-        })).into_response();
-    };
-    let metrics_tx = sensor.metrics_tx.clone();
-    ws.on_upgrade(move |socket| handle_metrics_websocket(socket, metrics_tx)).into_response()
+) -> impl IntoResponse {
+    ws.on_upgrade(|socket| handle_metrics_websocket(socket, state))
 }
 
-// ── Stream control stubs ───────────────────────────────────────────────────────
-
+/// Start streaming
 pub async fn start_stream(
     State(state): State<AppState>,
     Json(payload): Json<StreamStartRequest>,
 ) -> impl IntoResponse {
+    // Implementation for starting streaming
     match payload.stream_type {
         StreamType::Raw => {
-            let baud = state.config.sensors.first().map(|s| s.baud_rate).unwrap_or(115200);
-            if baud != 3000000 {
+            if state.config.modbus.baud_rate != 3000000 {
                 return (
                     StatusCode::BAD_REQUEST,
                     Json(ErrorResponse {
@@ -190,11 +253,23 @@ pub async fn start_stream(
         .into_response()
 }
 
+/// Stop streaming
 pub async fn stop_stream(State(_state): State<AppState>) -> impl IntoResponse {
-    (StatusCode::OK, Json(serde_json::json!({ "success": true, "message": "Streaming stopped" })))
+    info!("Stopping stream");
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "success": true,
+            "message": "Streaming stopped"
+        })),
+    )
+        .into_response()
 }
 
+/// Get stream status
 pub async fn get_stream_status(State(_state): State<AppState>) -> impl IntoResponse {
+    // For now, return a static status
+    // In a real implementation, this would check the actual streaming state
     let status = StreamStatus {
         active: false,
         stream_type: None,
@@ -202,24 +277,24 @@ pub async fn get_stream_status(State(_state): State<AppState>) -> impl IntoRespo
         sample_count: 0,
         buffer_utilization: 0.0,
     };
-    Json(status)
+
+    Json(status).into_response()
 }
 
-// ── WebSocket connection handlers ──────────────────────────────────────────────
+/// Handle raw data WebSocket connection
+async fn handle_raw_websocket(mut socket: WebSocket, state: AppState) {
+    info!("New raw data WebSocket connection");
 
-async fn handle_raw_websocket(
-    mut socket: WebSocket,
-    modbus_client: Arc<RwLock<Option<ModbusClient>>>,
-    sensor_id: usize,
-) {
-    info!("New raw data WebSocket connection (sensor {})", sensor_id);
-
+    // Send initial status
     let status_message = match serde_json::to_string(&WebSocketMessage::Status {
         connected: true,
         streaming: false,
     }) {
         Ok(msg) => msg,
-        Err(e) => { error!("Failed to serialize status message: {}", e); return; }
+        Err(e) => {
+            error!("Failed to serialize status message: {}", e);
+            return;
+        }
     };
 
     if socket.send(Message::Text(status_message.into())).await.is_err() {
@@ -227,18 +302,24 @@ async fn handle_raw_websocket(
         return;
     }
 
-    let stream_manager = Arc::new(StreamManager::new(modbus_client));
-    let (tx, mut rx) = broadcast::channel(1000);
-    let sm_clone = stream_manager.clone();
+    // Create a stream manager for this connection
+    let stream_manager = Arc::new(StreamManager::new(state.modbus_client.clone()));
 
+    // Start raw data streaming
+    let (tx, mut rx) = broadcast::channel(1000);
+    let stream_manager_clone = stream_manager.clone();
+
+    // Spawn task to continuously read raw data
     let read_task = tokio::spawn(async move {
-        if let Err(e) = sm_clone.start_raw_streaming(tx, sensor_id).await {
+        if let Err(e) = stream_manager_clone.start_raw_streaming(tx).await {
             error!("Raw streaming task failed: {}", e);
         }
     });
 
+    // Handle WebSocket messages and forward stream data
     loop {
         tokio::select! {
+            // Handle incoming WebSocket messages
             msg = socket.next() => {
                 match msg {
                     Some(Ok(Message::Text(text))) => {
@@ -249,19 +330,30 @@ async fn handle_raw_websocket(
                             }
                         }
                     }
-                    Some(Ok(Message::Close(_))) => { info!("WebSocket connection closed"); break; }
-                    Some(Err(e)) => { error!("WebSocket error: {}", e); break; }
+                    Some(Ok(Message::Close(_))) => {
+                        info!("WebSocket connection closed");
+                        break;
+                    }
+                    Some(Err(e)) => {
+                        error!("WebSocket error: {}", e);
+                        break;
+                    }
                     None => break,
                     _ => {}
                 }
             }
+            // Forward stream data to WebSocket
             data = rx.recv() => {
                 match data {
                     Ok(message) => {
                         let json = match serde_json::to_string(&message) {
-                            Ok(j) => j,
-                            Err(e) => { error!("Failed to serialize message: {}", e); continue; }
+                            Ok(json) => json,
+                            Err(e) => {
+                                error!("Failed to serialize message: {}", e);
+                                continue;
+                            }
                         };
+
                         if socket.send(Message::Text(json.into())).await.is_err() {
                             warn!("Failed to send data to WebSocket");
                             break;
@@ -269,6 +361,7 @@ async fn handle_raw_websocket(
                     }
                     Err(broadcast::error::RecvError::Lagged(skipped)) => {
                         warn!("WebSocket client lagging, skipped {} messages", skipped);
+                        // Send error message to client
                         let error_msg = WebSocketMessage::Error {
                             message: format!("Client lagging, skipped {} messages", skipped),
                             code: Some("CLIENT_LAGGING".to_string()),
@@ -277,20 +370,22 @@ async fn handle_raw_websocket(
                             let _ = socket.send(Message::Text(json.into())).await;
                         }
                     }
-                    Err(broadcast::error::RecvError::Closed) => { info!("Stream closed"); break; }
+                    Err(broadcast::error::RecvError::Closed) => {
+                        info!("Stream closed");
+                        break;
+                    }
                 }
             }
         }
     }
 
+    // Clean up
     read_task.abort();
-    info!("Raw data WebSocket connection closed (sensor {})", sensor_id);
+    info!("Raw data WebSocket connection closed");
 }
 
-async fn handle_metrics_websocket(
-    mut socket: WebSocket,
-    metrics_tx: broadcast::Sender<WebSocketMessage>,
-) {
+/// Handle metrics WebSocket connection — subscribes to the shared background reader in AppState.
+async fn handle_metrics_websocket(mut socket: WebSocket, state: AppState) {
     info!("New metrics WebSocket connection");
 
     let status_message = match serde_json::to_string(&WebSocketMessage::Status {
@@ -298,14 +393,18 @@ async fn handle_metrics_websocket(
         streaming: true,
     }) {
         Ok(msg) => msg,
-        Err(e) => { error!("Failed to serialize status message: {}", e); return; }
+        Err(e) => {
+            error!("Failed to serialize status message: {}", e);
+            return;
+        }
     };
 
     if socket.send(Message::Text(status_message.into())).await.is_err() {
         return;
     }
 
-    let mut rx = metrics_tx.subscribe();
+    // Subscribe to the single shared metrics broadcast channel
+    let mut rx = state.metrics_tx.subscribe();
 
     loop {
         tokio::select! {
@@ -313,7 +412,9 @@ async fn handle_metrics_websocket(
                 match msg {
                     Some(Ok(Message::Text(text))) => {
                         if text == "ping" {
-                            if socket.send(Message::Text("pong".into())).await.is_err() { break; }
+                            if socket.send(Message::Text("pong".into())).await.is_err() {
+                                break;
+                            }
                         }
                     }
                     Some(Ok(Message::Close(_))) | None => break,
@@ -326,7 +427,9 @@ async fn handle_metrics_websocket(
                     Ok(message) => {
                         match serde_json::to_string(&message) {
                             Ok(json) => {
-                                if socket.send(Message::Text(json.into())).await.is_err() { break; }
+                                if socket.send(Message::Text(json.into())).await.is_err() {
+                                    break;
+                                }
                             }
                             Err(e) => error!("Failed to serialize metrics: {}", e),
                         }
