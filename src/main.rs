@@ -240,95 +240,59 @@ async fn run_startup_diagnostics(
     }
 }
 
-/// Spawn slow-path (skew/kurt every 5 s) and fast-path (6 metrics every ~1 s) tasks for one sensor.
+/// Spawn a metrics background task for one sensor.
+/// Reads all metrics at the configured rate and broadcasts to subscribers.
 fn spawn_metrics_tasks(
     mc: Arc<tokio::sync::RwLock<Option<ModbusClient>>>,
     tx: broadcast::Sender<types::WebSocketMessage>,
+    rate_hz: f64,
 ) {
-    type SlowCache = Arc<tokio::sync::Mutex<Option<(types::AccelerationData, types::AccelerationData)>>>;
-    let slow_cache: SlowCache = Arc::new(tokio::sync::Mutex::new(None));
-
-    // Slow path: skewness + kurtosis every 5 s
-    {
-        let mc = mc.clone();
-        let cache = slow_cache.clone();
-        let tx2 = tx.clone();
-        tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(Duration::from_secs(5)).await;
-                if tx2.receiver_count() == 0 {
-                    continue;
-                }
-                let guard = mc.read().await;
-                if let Some(client) = &*guard {
-                    match (client.read_gravity_skewness().await, client.read_gravity_kurtosis().await) {
-                        (Ok(s), Ok(k)) => { *cache.lock().await = Some((s, k)); }
-                        (Err(e), _) | (_, Err(e)) => { error!("Slow metrics read error: {}", e); }
-                    }
-                }
-                drop(guard);
+    let interval_ms = (1000.0 / rate_hz.max(0.1)) as u64;
+    tokio::spawn(async move {
+        loop {
+            if tx.receiver_count() == 0 {
+                tokio::time::sleep(Duration::from_millis(200)).await;
+                continue;
             }
-        });
-    }
 
-    // Fast path: 6 metrics every ~1 s, uses cached skew/kurt
-    {
-        tokio::spawn(async move {
-            loop {
-                if tx.receiver_count() == 0 {
-                    tokio::time::sleep(Duration::from_millis(200)).await;
-                    continue;
-                }
-
-                let cycle_start = tokio::time::Instant::now();
-                let guard = mc.read().await;
-                match &*guard {
-                    Some(client) => {
-                        let g_rms  = client.read_gravity_rms().await;
-                        let g_peak = client.read_gravity_peak().await;
-                        let g_cf   = client.read_gravity_crest_factor().await;
-                        let g_freq = client.read_gravity_primary_frequency().await;
-                        let vel    = client.read_velocity_metrics().await;
-                        let temp   = client.read_temperature().await;
-                        drop(guard);
-
-                        match (g_rms, g_peak, g_cf, g_freq, vel, temp) {
-                            (Ok(rms), Ok(peak), Ok(crest_factor), Ok(primary_frequency),
-                             Ok(velocity), Ok(temperature)) => {
-                                if let Some((skewness, kurtosis)) = slow_cache.lock().await.clone() {
-                                    let _ = tx.send(types::WebSocketMessage::Metrics {
-                                        timestamp: chrono::Utc::now(),
-                                        gravity: types::GravityMetrics {
-                                            rms,
-                                            peak,
-                                            crest_factor,
-                                            skewness,
-                                            kurtosis,
-                                            primary_frequency,
-                                        },
-                                        velocity,
-                                        temperature,
-                                    });
-                                }
-                                let elapsed = cycle_start.elapsed();
-                                if elapsed < Duration::from_secs(1) {
-                                    tokio::time::sleep(Duration::from_secs(1) - elapsed).await;
-                                }
-                            }
-                            _ => {
-                                error!("Fast metrics read error");
-                                tokio::time::sleep(Duration::from_millis(500)).await;
-                            }
+            let cycle_start = tokio::time::Instant::now();
+            let guard = mc.read().await;
+            match &*guard {
+                Some(client) => {
+                    let g = client.read_gravity_metrics().await;
+                    let v = client.read_velocity_metrics().await;
+                    let t = client.read_temperature().await;
+                    drop(guard);
+                    match (g, v, t) {
+                        (Ok(gravity), Ok(velocity), Ok(temperature)) => {
+                            let _ = tx.send(types::WebSocketMessage::Metrics {
+                                timestamp: chrono::Utc::now(),
+                                gravity,
+                                velocity,
+                                temperature,
+                            });
+                        }
+                        _ => {
+                            error!("Metrics read error");
+                            tokio::time::sleep(Duration::from_millis(500)).await;
+                            continue;
                         }
                     }
-                    None => {
-                        drop(guard);
-                        tokio::time::sleep(Duration::from_millis(1000)).await;
-                    }
+                }
+                None => {
+                    drop(guard);
+                    tokio::time::sleep(Duration::from_millis(1000)).await;
+                    continue;
                 }
             }
-        });
-    }
+
+            let elapsed = cycle_start.elapsed();
+            let target = Duration::from_millis(interval_ms);
+            if elapsed < target {
+                tokio::time::sleep(target - elapsed).await;
+            }
+        }
+    });
 }
 
 // ── CSV viewer ────────────────────────────────────────────────────────────────
@@ -453,7 +417,7 @@ async fn main() -> Result<()> {
         let arc = Arc::new(tokio::sync::RwLock::new(client));
         let (tx, _) = broadcast::channel::<types::WebSocketMessage>(16);
 
-        spawn_metrics_tasks(arc.clone(), tx.clone());
+        spawn_metrics_tasks(arc.clone(), tx.clone(), config.streaming.metrics_update_rate_hz);
 
         modbus_arcs.push(arc);
         metrics_txs_vec.push(tx);

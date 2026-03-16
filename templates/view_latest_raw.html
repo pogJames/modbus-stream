@@ -13,54 +13,32 @@
 
   <div style="display:flex; flex-direction:column; gap:2rem;">
 
+    {% for i in range(1, sensor_count + 1) %}
     <div>
-      <h2 style="margin-bottom:0.75rem; font-size:1rem; color:var(--text-muted);">Sensor 1</h2>
+      <h2 style="margin-bottom:0.75rem; font-size:1rem; color:var(--text-muted);">Sensor {{ i }}</h2>
       <div class="display-grid">
         <div class="display-card x">
           <div class="display-axis">X Axis</div>
-          <div class="display-value" id="s1-val-x">—</div>
+          <div class="display-value" id="s{{ i }}-val-x">—</div>
           <div class="display-unit">g</div>
         </div>
         <div class="display-card y">
           <div class="display-axis">Y Axis</div>
-          <div class="display-value" id="s1-val-y">—</div>
+          <div class="display-value" id="s{{ i }}-val-y">—</div>
           <div class="display-unit">g</div>
         </div>
         <div class="display-card z">
           <div class="display-axis">Z Axis</div>
-          <div class="display-value" id="s1-val-z">—</div>
+          <div class="display-value" id="s{{ i }}-val-z">—</div>
           <div class="display-unit">g</div>
         </div>
       </div>
       <div class="data-footer">
-        <span id="s1-footer-ts">—</span>
+        <span id="s{{ i }}-footer-ts">—</span>
+        {% if loop.last %}<span>Refreshes every 500 ms</span>{% endif %}
       </div>
     </div>
-
-    <div>
-      <h2 style="margin-bottom:0.75rem; font-size:1rem; color:var(--text-muted);">Sensor 2</h2>
-      <div class="display-grid">
-        <div class="display-card x">
-          <div class="display-axis">X Axis</div>
-          <div class="display-value" id="s2-val-x">—</div>
-          <div class="display-unit">g</div>
-        </div>
-        <div class="display-card y">
-          <div class="display-axis">Y Axis</div>
-          <div class="display-value" id="s2-val-y">—</div>
-          <div class="display-unit">g</div>
-        </div>
-        <div class="display-card z">
-          <div class="display-axis">Z Axis</div>
-          <div class="display-value" id="s2-val-z">—</div>
-          <div class="display-unit">g</div>
-        </div>
-      </div>
-      <div class="data-footer">
-        <span id="s2-footer-ts">—</span>
-        <span>Refreshes every 500 ms</span>
-      </div>
-    </div>
+    {% endfor %}
 
   </div>
 
@@ -108,8 +86,9 @@ async function poll() {
       return;
     }
     const d = await res.json();
-    updateSensor('s1', d.sensor1);
-    updateSensor('s2', d.sensor2);
+    {% for i in range(1, sensor_count + 1) %}
+    updateSensor('s{{ i }}', d.sensor{{ i }});
+    {% endfor %}
     setOk();
   } catch (e) {
     setErr('Offline');

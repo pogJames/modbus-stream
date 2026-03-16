@@ -13,7 +13,7 @@ use tracing::{error, info, warn};
 use crate::{
     config::AppConfig,
     modbus::ModbusClient,
-    types::{Feedback, SensorStatus, SettingsForm, SettingsStatus, ValidationErrors},
+    types::{Feedback, SensorConnectionForm, SensorStatus, SettingsForm, SettingsStatus, ValidationErrors},
     AppState,
 };
 
@@ -353,8 +353,7 @@ async fn check_sensor(
 
 fn parse_form_data(form_data: HashMap<String, String>) -> Result<SettingsForm, ValidationErrors> {
     let mut errors = ValidationErrors::new();
-    
-    // Helper macro for parsing with error handling
+
     macro_rules! parse_field {
         ($field:expr, $type:ty, $default:expr) => {
             match form_data.get($field).and_then(|v| v.parse::<$type>().ok()) {
@@ -366,12 +365,30 @@ fn parse_form_data(form_data: HashMap<String, String>) -> Result<SettingsForm, V
             }
         };
     }
-    
-    let device_path = form_data.get("device_path").cloned().unwrap_or_default();
-    let baud_rate = parse_field!("baud_rate", u32, 115200);
-    let slave_id = parse_field!("slave_id", u8, 1);
-    let timeout_ms = parse_field!("timeout_ms", u64, 5000);
-    let retry_attempts = parse_field!("retry_attempts", u8, 3);
+
+    // Parse per-sensor connection settings (sensor_0_*, sensor_1_*, ...)
+    let mut sensors = Vec::new();
+    for i in 0..4 {
+        let device_key = format!("sensor_{}_device", i);
+        if let Some(device) = form_data.get(&device_key).cloned() {
+            if !device.is_empty() {
+                let baud_rate = form_data.get(&format!("sensor_{}_baud_rate", i))
+                    .and_then(|v| v.parse::<u32>().ok()).unwrap_or(115200);
+                let slave_id = form_data.get(&format!("sensor_{}_slave_id", i))
+                    .and_then(|v| v.parse::<u8>().ok()).unwrap_or(1);
+                let timeout_ms = form_data.get(&format!("sensor_{}_timeout_ms", i))
+                    .and_then(|v| v.parse::<u64>().ok()).unwrap_or(5000);
+                let retry_attempts = form_data.get(&format!("sensor_{}_retry_attempts", i))
+                    .and_then(|v| v.parse::<u8>().ok()).unwrap_or(3);
+                sensors.push(SensorConnectionForm { device, baud_rate, slave_id, timeout_ms, retry_attempts });
+            }
+        }
+    }
+
+    if sensors.is_empty() {
+        errors.add_general_error("At least one sensor must be configured");
+    }
+
     let sample_rate = parse_field!("sample_rate", u16, 7812);
     let stream_size = parse_field!("stream_size", u16, 123);
     let high_pass_filter = form_data.contains_key("high_pass_filter");
@@ -379,17 +396,13 @@ fn parse_form_data(form_data: HashMap<String, String>) -> Result<SettingsForm, V
     let buffer_size = parse_field!("buffer_size", usize, 1024);
     let metrics_update_rate_hz = parse_field!("metrics_update_rate_hz", f64, 5.0);
     let websocket_ping_interval_sec = parse_field!("websocket_ping_interval_sec", u64, 30);
-    
+
     if errors.has_errors() {
         return Err(errors);
     }
-    
+
     Ok(SettingsForm {
-        device_path,
-        baud_rate,
-        slave_id,
-        timeout_ms,
-        retry_attempts,
+        sensors,
         sample_rate,
         stream_size,
         high_pass_filter,
@@ -402,62 +415,45 @@ fn parse_form_data(form_data: HashMap<String, String>) -> Result<SettingsForm, V
 
 fn validate_settings(form: &SettingsForm) -> Result<(), ValidationErrors> {
     let mut errors = ValidationErrors::new();
-    
-    // Validate device path
-    if form.device_path.trim().is_empty() {
-        errors.add_field_error("device_path", "Device path cannot be empty");
+
+    if form.sensors.is_empty() {
+        errors.add_general_error("At least one sensor must be configured");
     }
-    
-    // Validate baud rate
-    if !matches!(form.baud_rate, 115200 | 3000000) {
-        errors.add_field_error("baud_rate", "Baud rate must be 115200 or 3000000 bps");
+
+    for (i, sensor) in form.sensors.iter().enumerate() {
+        if sensor.device.trim().is_empty() {
+            errors.add_field_error(&format!("sensor_{}_device", i), "Device path cannot be empty");
+        }
+        if !matches!(sensor.baud_rate, 115200 | 3000000) {
+            errors.add_field_error(&format!("sensor_{}_baud_rate", i), "Baud rate must be 115200 or 3000000 bps");
+        }
+        if sensor.slave_id == 0 || sensor.slave_id > 247 {
+            errors.add_field_error(&format!("sensor_{}_slave_id", i), "Slave ID must be between 1 and 247");
+        }
+        if sensor.timeout_ms < 1000 || sensor.timeout_ms > 30000 {
+            errors.add_field_error(&format!("sensor_{}_timeout_ms", i), "Timeout must be between 1000 and 30000 ms");
+        }
+        if sensor.retry_attempts == 0 || sensor.retry_attempts > 10 {
+            errors.add_field_error(&format!("sensor_{}_retry_attempts", i), "Retry attempts must be between 1 and 10");
+        }
     }
-    
-    // Validate slave ID
-    if form.slave_id == 0 || form.slave_id > 247 {
-        errors.add_field_error("slave_id", "Slave ID must be between 1 and 247");
-    }
-    
-    // Validate sample rate
+
     if form.sample_rate == 0 || form.sample_rate > 10000 {
         errors.add_field_error("sample_rate", "Sample rate must be between 1 and 10000 sps");
     }
-    
-    // Validate stream size
     if form.stream_size == 0 || form.stream_size > 123 {
         errors.add_field_error("stream_size", "Stream size must be between 1 and 123 registers");
     }
-    
-    // Validate timeout
-    if form.timeout_ms < 1000 || form.timeout_ms > 30000 {
-        errors.add_field_error("timeout_ms", "Timeout must be between 1000 and 30000 ms");
-    }
-    
-    // Validate retry attempts
-    if form.retry_attempts == 0 || form.retry_attempts > 10 {
-        errors.add_field_error("retry_attempts", "Retry attempts must be between 1 and 10");
-    }
-    
-    // Validate max connections
     if form.max_connections == 0 || form.max_connections > 50 {
         errors.add_field_error("max_connections", "Max connections must be between 1 and 50");
     }
-    
-    // Validate buffer size
     if form.buffer_size < 256 || form.buffer_size > 8192 {
         errors.add_field_error("buffer_size", "Buffer size must be between 256 and 8192");
     }
-    
-    // Validate metrics update rate
     if form.metrics_update_rate_hz <= 0.0 || form.metrics_update_rate_hz > 5.0 {
         errors.add_field_error("metrics_update_rate_hz", "Metrics update rate must be between 0.1 and 5.0 Hz");
     }
-    
-    // Business rule validations
-    if form.sample_rate > 1000 && form.baud_rate != 3000000 {
-        errors.add_general_error("High sample rates (>1000 sps) require 3 Mbps baud rate for reliable operation");
-    }
-    
+
     if errors.has_errors() {
         Err(errors)
     } else {
@@ -490,12 +486,13 @@ async fn apply_settings_to_system(state: &AppState, settings: &SettingsForm) -> 
             }
             details.push(format!("High pass filter: {}", if settings.high_pass_filter { "enabled" } else { "disabled" }));
 
-            // Handle baud rate change (requires special handling)
-            if settings.baud_rate != state.config.sensors.first().map(|s| s.baud_rate).unwrap_or(115200) {
-                if let Err(e) = client.set_baud_rate(settings.baud_rate).await {
+            // Handle baud rate change for sensor 1 (requires special handling)
+            let new_baud = settings.sensors.first().map(|s| s.baud_rate).unwrap_or(115200);
+            if new_baud != state.config.sensors.first().map(|s| s.baud_rate).unwrap_or(115200) {
+                if let Err(e) = client.set_baud_rate(new_baud).await {
                     return Err(anyhow::anyhow!("Failed to set baud rate: {}", e));
                 }
-                details.push(format!("Baud rate set to {} bps (requires power cycle)", settings.baud_rate));
+                details.push(format!("Baud rate set to {} bps (requires power cycle)", new_baud));
             }
 
             // Clear scale factor cache since sensor may have been reconfigured
@@ -506,15 +503,14 @@ async fn apply_settings_to_system(state: &AppState, settings: &SettingsForm) -> 
         }
     }
 
-    // Update configuration file with new settings (updates sensor 1 connection params)
-    let mut new_sensors = state.config.sensors.clone();
-    if let Some(s) = new_sensors.first_mut() {
-        s.device = settings.device_path.clone();
-        s.baud_rate = settings.baud_rate;
-        s.slave_id = settings.slave_id;
-        s.timeout_ms = settings.timeout_ms;
-        s.retry_attempts = settings.retry_attempts;
-    }
+    // Update configuration file with new per-sensor connection params
+    let new_sensors = settings.sensors.iter().map(|s| crate::config::ModbusConfig {
+        device: s.device.clone(),
+        baud_rate: s.baud_rate,
+        slave_id: s.slave_id,
+        timeout_ms: s.timeout_ms,
+        retry_attempts: s.retry_attempts,
+    }).collect();
     let new_config = AppConfig {
         server: state.config.server.clone(),
         sensors: new_sensors,
@@ -540,20 +536,19 @@ async fn apply_settings_to_system(state: &AppState, settings: &SettingsForm) -> 
 }
 
 async fn test_connection_with_settings(state: &AppState, settings: &SettingsForm) -> anyhow::Result<String> {
+    let s0 = settings.sensors.first()
+        .ok_or_else(|| anyhow::anyhow!("No sensors configured"))?;
+
     // Check if settings differ from current configuration (sensor 1)
-    let s0 = state.config.sensors.first();
-    let settings_differ = s0.map_or(true, |s|
-        settings.device_path != s.device
-        || settings.baud_rate != s.baud_rate
-        || settings.slave_id != s.slave_id
+    let settings_differ = state.config.sensors.first().map_or(true, |cur|
+        s0.device != cur.device || s0.baud_rate != cur.baud_rate || s0.slave_id != cur.slave_id
     );
 
     if settings_differ {
-        // Create a temporary connection with the new settings
         info!("Testing connection with new settings: {} @ {} bps, slave {}",
-              settings.device_path, settings.baud_rate, settings.slave_id);
+              s0.device, s0.baud_rate, s0.slave_id);
 
-        match ModbusClient::new(&settings.device_path, settings.baud_rate, settings.slave_id).await {
+        match ModbusClient::new(&s0.device, s0.baud_rate, s0.slave_id).await {
             Ok(temp_client) => {
                 match temp_client.test_connection().await {
                     Ok(()) => {

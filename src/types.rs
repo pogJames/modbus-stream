@@ -238,21 +238,27 @@ pub mod function_codes {
 }
 
 /// Data conversion utilities
-/// Settings form data
+/// Per-sensor connection form data
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SettingsForm {
-    // Connection settings
-    pub device_path: String,
+pub struct SensorConnectionForm {
+    pub device: String,
     pub baud_rate: u32,
     pub slave_id: u8,
     pub timeout_ms: u64,
     pub retry_attempts: u8,
-    
-    // Sensor settings  
+}
+
+/// Settings form data
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SettingsForm {
+    // Per-sensor connection settings
+    pub sensors: Vec<SensorConnectionForm>,
+
+    // Sensor settings
     pub sample_rate: u16,
     pub stream_size: u16,
     pub high_pass_filter: bool,
-    
+
     // Streaming settings
     pub max_connections: usize,
     pub buffer_size: usize,
@@ -324,16 +330,18 @@ impl ValidationErrors {
 
 impl From<&crate::config::AppConfig> for SettingsForm {
     fn from(config: &crate::config::AppConfig) -> Self {
-        let s0 = config.sensors.first();
+        let sensors = config.sensors.iter().map(|s| SensorConnectionForm {
+            device: s.device.clone(),
+            baud_rate: s.baud_rate,
+            slave_id: s.slave_id,
+            timeout_ms: s.timeout_ms,
+            retry_attempts: s.retry_attempts,
+        }).collect();
         Self {
-            device_path: s0.map(|s| s.device.as_str()).unwrap_or("/dev/ttyUSB0").to_string(),
-            baud_rate: s0.map(|s| s.baud_rate).unwrap_or(115200),
-            slave_id: s0.map(|s| s.slave_id).unwrap_or(1),
-            timeout_ms: s0.map(|s| s.timeout_ms).unwrap_or(5000),
-            retry_attempts: s0.map(|s| s.retry_attempts).unwrap_or(3),
-            sample_rate: 7812, // Default, will be read from sensor
-            stream_size: 123,   // Default max
-            high_pass_filter: false, // Default
+            sensors,
+            sample_rate: 7812,
+            stream_size: 123,
+            high_pass_filter: false,
             max_connections: config.streaming.max_connections,
             buffer_size: config.streaming.buffer_size,
             metrics_update_rate_hz: config.streaming.metrics_update_rate_hz,

@@ -34,7 +34,8 @@ pub async fn metrics_stream_page_sensor(
 
 pub async fn latest_raw_page(State(state): State<AppState>) -> Html<String> {
     state.render_template("view_latest_raw.html", "/view/latest-raw", context! {
-        title => "Latest Raw Reading"
+        title => "Latest Raw Reading",
+        sensor_count => state.sensor_count(),
     })
 }
 
@@ -55,6 +56,7 @@ pub async fn all_metrics_page_sensor(
 
 pub async fn diagnostics_page(State(state): State<AppState>) -> Html<String> {
     state.render_template("view_diagnostics.html", "/view/diagnostics", context! {
-        title => "Diagnostics"
+        title => "Diagnostics",
+        sensor_count => state.sensor_count(),
     })
 }

@@ -5,14 +5,14 @@ use axum::{
 };
 use futures::{sink::SinkExt, stream::StreamExt};
 use std::{sync::Arc, time::Duration};
-use tokio::{sync::broadcast, time::interval};
-use tracing::{debug, error, info, warn};
+use tokio::sync::broadcast;
+use tracing::{error, info, warn};
 use anyhow::Result;
 use chrono::Utc;
 
 use crate::{
     modbus::ModbusClient,
-    types::{AccelerationData, ErrorResponse, StreamStartRequest, StreamStatus, StreamType, WebSocketMessage},
+    types::{ErrorResponse, StreamStartRequest, StreamStatus, StreamType, WebSocketMessage},
     AppState,
 };
 
@@ -103,103 +103,6 @@ impl StreamManager {
         Ok(())
     }
 
-    /// Start metrics streaming task
-    async fn start_metrics_streaming(
-        &self,
-        tx: broadcast::Sender<WebSocketMessage>,
-    ) -> Result<()> {
-        info!("Starting metrics streaming");
-
-        let mut interval = interval(Duration::from_millis(200)); // 5 Hz
-
-        loop {
-            interval.tick().await;
-
-            match self.read_metrics_data().await {
-                Ok(message) => {
-                    if let Err(e) = tx.send(message) {
-                        // All receivers dropped
-                        if matches!(e, broadcast::error::SendError(_)) {
-                            info!("All metrics receivers dropped, stopping stream");
-                            break;
-                        }
-                    }
-                }
-                Err(e) => {
-                    error!("Failed to read metrics: {}", e);
-
-                    let error_message = WebSocketMessage::Error {
-                        message: format!("Failed to read metrics: {}", e),
-                        code: Some("METRICS_READ_ERROR".to_string()),
-                    };
-
-                    if let Err(send_error) = tx.send(error_message) {
-                        if matches!(send_error, broadcast::error::SendError(_)) {
-                            info!("All receivers dropped, stopping stream");
-                            break;
-                        }
-                    }
-
-                    // Wait a bit before retrying
-                    tokio::time::sleep(Duration::from_millis(500)).await;
-                }
-            }
-        }
-
-        info!("Metrics streaming stopped");
-        Ok(())
-    }
-
-    /// Read a batch of raw data from the sensor
-    async fn read_raw_data_batch(&self) -> Result<Vec<AccelerationData>> {
-        let client_guard = self.modbus_client.read().await;
-        match &*client_guard {
-            Some(client) => {
-                // Check FIFO buffer size first
-                let buffer_size = client.read_fifo_buffer_size().await?;
-
-                if buffer_size == 0 {
-                    debug!("FIFO buffer is empty");
-                    return Ok(vec![]);
-                }
-
-                // Read up to the buffer size or maximum registers (123)
-                let read_count = std::cmp::min(buffer_size, 123);
-                let raw_data = client.read_raw_data_buffer(read_count).await?;
-
-                debug!("Read {} raw data samples", raw_data.len());
-                Ok(raw_data)
-            }
-            None => Err(anyhow::anyhow!("Modbus device not connected")),
-        }
-    }
-
-    /// Read metrics data and create WebSocket message
-    async fn read_metrics_data(&self) -> Result<WebSocketMessage> {
-        let client_guard = self.modbus_client.read().await;
-        match &*client_guard {
-            Some(client) => {
-                // Read all metrics in parallel for better performance
-                let (gravity_result, velocity_result, temperature_result) = tokio::join!(
-                    client.read_gravity_metrics(),
-                    client.read_velocity_metrics(),
-                    client.read_temperature()
-                );
-
-                let gravity = gravity_result?;
-                let velocity = velocity_result?;
-                let temperature = temperature_result?;
-
-                Ok(WebSocketMessage::Metrics {
-                    timestamp: Utc::now(),
-                    gravity,
-                    velocity,
-                    temperature,
-                })
-            }
-            None => Err(anyhow::anyhow!("Modbus device not connected")),
-        }
-    }
 }
 
 /// WebSocket handler for raw data streaming
