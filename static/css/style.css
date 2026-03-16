@@ -428,6 +428,75 @@ a { color: inherit; text-decoration: none; }
 .status-value { font-weight: 600; }
 
 /* ─── Tabs (shadcn-style) ─────────────────────────────────────── */
+
+/* Connection tab panel (settings page) */
+.conn-panel {
+  border: 1px solid var(--border);
+  border-radius: 0 var(--radius) var(--radius) var(--radius);
+  padding: 1.25rem;
+  margin-top: -1px; /* tuck under the tab list */
+}
+
+/* Collapsible sensor panel (latest-raw page) */
+.sensor-panel {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--background);
+  overflow: hidden;
+}
+
+.sensor-panel summary {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.875rem 1.25rem;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.9375rem;
+  list-style: none;
+  user-select: none;
+  border-bottom: 1px solid transparent;
+  transition: background 0.1s ease;
+}
+
+.sensor-panel summary::-webkit-details-marker { display: none; }
+
+.sensor-panel[open] summary {
+  border-bottom-color: var(--border);
+}
+
+.sensor-panel summary:hover {
+  background: var(--muted);
+}
+
+.sensor-panel-ts {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.75rem;
+  font-weight: 400;
+  color: var(--muted-foreground);
+  flex: 1;
+}
+
+.sensor-chevron {
+  width: 15px;
+  height: 15px;
+  color: var(--muted-foreground);
+  transition: transform 0.15s ease;
+  flex-shrink: 0;
+}
+
+.sensor-panel[open] .sensor-chevron {
+  transform: rotate(180deg);
+}
+
+.sensor-panel-body {
+  padding: 1.25rem;
+}
+
+.sensor-panel-body .display-grid {
+  margin-bottom: 0;
+}
+
 .tabs-list {
   display: inline-flex;
   height: 36px;
@@ -435,6 +504,18 @@ a { color: inherit; text-decoration: none; }
   background: var(--muted);
   border-radius: 8px;
   padding: 4px;
+}
+
+.tabs-list.white {
+  background: var(--background);
+}
+
+/* When tabs sit above a panel, square the bottom corners */
+#conn-tabs {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+  display: flex;
+  width: 100%;
 }
 
 .tabs-trigger {
