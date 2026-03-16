@@ -50,7 +50,10 @@ pub async fn set_sample_rate(
     State(state): State<AppState>,
     Json(payload): Json<SampleRateRequest>,
 ) -> impl IntoResponse {
-    let client_guard = state.modbus_client1.read().await;
+    let client_guard = match state.modbus_clients.first() {
+        Some(c) => c.read().await,
+        None => return handle_no_device().await.into_response(),
+    };
     match &*client_guard {
         Some(client) => {
             match client.set_sample_rate(payload.sample_rate).await {
@@ -98,7 +101,10 @@ pub async fn set_baud_rate(
             .into_response();
     }
 
-    let client_guard = state.modbus_client1.read().await;
+    let client_guard = match state.modbus_clients.first() {
+        Some(c) => c.read().await,
+        None => return handle_no_device().await.into_response(),
+    };
     match &*client_guard {
         Some(client) => {
             match client.set_baud_rate(payload.baud_rate).await {
@@ -134,7 +140,10 @@ pub async fn set_high_pass_filter(
     State(state): State<AppState>,
     Json(payload): Json<HighPassFilterRequest>,
 ) -> impl IntoResponse {
-    let client_guard = state.modbus_client1.read().await;
+    let client_guard = match state.modbus_clients.first() {
+        Some(c) => c.read().await,
+        None => return handle_no_device().await.into_response(),
+    };
     match &*client_guard {
         Some(client) => {
             match client.set_high_pass_filter(payload.enabled).await {
@@ -181,7 +190,10 @@ pub async fn set_stream_size(
             .into_response();
     }
 
-    let client_guard = state.modbus_client1.read().await;
+    let client_guard = match state.modbus_clients.first() {
+        Some(c) => c.read().await,
+        None => return handle_no_device().await.into_response(),
+    };
     match &*client_guard {
         Some(client) => {
             match client.set_stream_size(payload.stream_size).await {
@@ -213,7 +225,9 @@ pub async fn set_stream_size(
 
 /// Helper function to read current configuration
 async fn read_current_config(state: &AppState) -> anyhow::Result<ConfigResponse> {
-    let client_guard = state.modbus_client1.read().await;
+    let client_arc = state.modbus_clients.first()
+        .ok_or_else(|| anyhow::anyhow!("No sensors configured"))?;
+    let client_guard = client_arc.read().await;
     match &*client_guard {
         Some(client) => {
             let temperature = client.read_temperature().await?;
@@ -224,7 +238,7 @@ async fn read_current_config(state: &AppState) -> anyhow::Result<ConfigResponse>
             // so we'll use default/configured values
             Ok(ConfigResponse {
                 sample_rate: 7812, // Default for I-type sensors
-                baud_rate: state.config.modbus1.baud_rate,
+                baud_rate: state.config.sensors.first().map(|s| s.baud_rate).unwrap_or(115200),
                 high_pass_filter: false, // Default state
                 stream_size: 123, // Maximum
                 temperature,

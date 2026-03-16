@@ -208,10 +208,10 @@ pub async fn websocket_raw_handler(
     ws: WebSocketUpgrade,
     State(state): State<AppState>,
 ) -> impl IntoResponse {
-    let client = match sensor {
-        1 => state.modbus_client1.clone(),
-        2 => state.modbus_client2.clone(),
-        _ => {
+    let idx = (sensor as usize).wrapping_sub(1);
+    let client = match state.modbus_clients.get(idx) {
+        Some(c) => c.clone(),
+        None => {
             return (StatusCode::NOT_FOUND, Json(ErrorResponse {
                 error: format!("Unknown sensor: {}", sensor),
                 code: Some("UNKNOWN_SENSOR".to_string()),
@@ -228,10 +228,10 @@ pub async fn websocket_metrics_handler(
     ws: WebSocketUpgrade,
     State(state): State<AppState>,
 ) -> impl IntoResponse {
-    let rx = match sensor {
-        1 => state.metrics_tx.subscribe(),
-        2 => state.metrics_tx2.subscribe(),
-        _ => {
+    let idx = (sensor as usize).wrapping_sub(1);
+    let rx = match state.metrics_txs.get(idx) {
+        Some(tx) => tx.subscribe(),
+        None => {
             return (StatusCode::NOT_FOUND, Json(ErrorResponse {
                 error: format!("Unknown sensor: {}", sensor),
                 code: Some("UNKNOWN_SENSOR".to_string()),
@@ -248,10 +248,10 @@ pub async fn start_stream(
     State(state): State<AppState>,
     Json(payload): Json<StreamStartRequest>,
 ) -> impl IntoResponse {
-    let baud_rate = match sensor {
-        1 => state.config.modbus1.baud_rate,
-        2 => state.config.modbus2.baud_rate,
-        _ => {
+    let idx = (sensor as usize).wrapping_sub(1);
+    let baud_rate = match state.config.sensors.get(idx) {
+        Some(s) => s.baud_rate,
+        None => {
             return (StatusCode::NOT_FOUND, Json(ErrorResponse {
                 error: format!("Unknown sensor: {}", sensor),
                 code: Some("UNKNOWN_SENSOR".to_string()),

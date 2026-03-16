@@ -324,12 +324,13 @@ impl ValidationErrors {
 
 impl From<&crate::config::AppConfig> for SettingsForm {
     fn from(config: &crate::config::AppConfig) -> Self {
+        let s0 = config.sensors.first();
         Self {
-            device_path: config.modbus1.device.clone(),
-            baud_rate: config.modbus1.baud_rate,
-            slave_id: config.modbus1.slave_id,
-            timeout_ms: config.modbus1.timeout_ms,
-            retry_attempts: config.modbus1.retry_attempts,
+            device_path: s0.map(|s| s.device.as_str()).unwrap_or("/dev/ttyUSB0").to_string(),
+            baud_rate: s0.map(|s| s.baud_rate).unwrap_or(115200),
+            slave_id: s0.map(|s| s.slave_id).unwrap_or(1),
+            timeout_ms: s0.map(|s| s.timeout_ms).unwrap_or(5000),
+            retry_attempts: s0.map(|s| s.retry_attempts).unwrap_or(3),
             sample_rate: 7812, // Default, will be read from sensor
             stream_size: 123,   // Default max
             high_pass_filter: false, // Default

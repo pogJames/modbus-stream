@@ -7,36 +7,38 @@ use tracing::error;
 
 use crate::{types::ErrorResponse, AppState};
 
-/// Get latest raw data for both sensors combined
+/// Get latest raw data for all sensors combined
 pub async fn get_latest_raw_combined(State(state): State<AppState>) -> impl IntoResponse {
-    let (r1, r2) = tokio::join!(
-        async {
-            let g = state.modbus_client1.read().await;
-            match &*g { Some(c) => c.read_latest_raw().await.ok(), None => None }
-        },
-        async {
-            let g = state.modbus_client2.read().await;
-            match &*g { Some(c) => c.read_latest_raw().await.ok(), None => None }
-        },
-    );
-    Json(serde_json::json!({ "sensor1": r1, "sensor2": r2 }))
+    let mut map = serde_json::Map::new();
+    for (i, client_arc) in state.modbus_clients.iter().enumerate() {
+        let g = client_arc.read().await;
+        let val = match &*g {
+            Some(c) => c.read_latest_raw().await.ok(),
+            None => None,
+        };
+        map.insert(
+            format!("sensor{}", i + 1),
+            serde_json::to_value(val).unwrap_or(serde_json::Value::Null),
+        );
+    }
+    Json(serde_json::Value::Object(map))
 }
 
 macro_rules! resolve_client {
-    ($sensor:expr, $state:expr) => {
-        match $sensor {
-            1 => &$state.modbus_client1,
-            2 => &$state.modbus_client2,
-            _ => return (
+    ($sensor:expr, $state:expr) => {{
+        let _idx = ($sensor as usize).wrapping_sub(1);
+        if _idx >= $state.modbus_clients.len() {
+            return (
                 StatusCode::NOT_FOUND,
                 Json(ErrorResponse {
                     error: format!("Unknown sensor: {}", $sensor),
                     code: Some("UNKNOWN_SENSOR".to_string()),
                     timestamp: chrono::Utc::now(),
                 }),
-            ).into_response(),
+            ).into_response();
         }
-    };
+        &$state.modbus_clients[_idx]
+    }};
 }
 
 /// Helper to handle when device is not connected

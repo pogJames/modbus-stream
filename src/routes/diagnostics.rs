@@ -58,31 +58,37 @@ async fn read_sensor_data(
 
 /// Get system diagnostics and sensor status
 pub async fn get_diagnostics(State(state): State<AppState>) -> impl IntoResponse {
-    let (conn1, sensor1) = read_sensor_data(&state.modbus_client1).await;
-    let (conn2, sensor2) = read_sensor_data(&state.modbus_client2).await;
-
-    let streaming_capable = if state.config.modbus1.baud_rate >= 3000000 {
+    let streaming_capable = if state.config.sensors.first().map(|s| s.baud_rate).unwrap_or(0) >= 3000000 {
         "full"
     } else {
         "metrics-only"
     };
 
+    // Build per-sensor configs and connection data
+    let mut sensor_configs = serde_json::Map::new();
+    let mut sensor_connections = serde_json::Map::new();
+    let mut sensor_data_map = serde_json::Map::new();
+
+    for (i, cfg) in state.config.sensors.iter().enumerate() {
+        let key = format!("sensor{}", i + 1);
+        sensor_configs.insert(format!("config{}", i + 1), json!({
+            "device": cfg.device,
+            "baudRate": cfg.baud_rate,
+            "slaveId": cfg.slave_id,
+        }));
+        if let Some(client_arc) = state.modbus_clients.get(i) {
+            let (conn, sensor) = read_sensor_data(client_arc).await;
+            sensor_connections.insert(format!("connection{}", i + 1), conn);
+            if sensor != Value::Null {
+                sensor_data_map.insert(key, sensor);
+            }
+        }
+    }
+
     let mut diagnostics = json!({
         "timestamp": chrono::Utc::now(),
         "service": "modbus-stream",
         "version": env!("CARGO_PKG_VERSION"),
-        "config1": {
-            "device": state.config.modbus1.device,
-            "baudRate": state.config.modbus1.baud_rate,
-            "slaveId": state.config.modbus1.slave_id,
-        },
-        "config2": {
-            "device": state.config.modbus2.device,
-            "baudRate": state.config.modbus2.baud_rate,
-            "slaveId": state.config.modbus2.slave_id,
-        },
-        "connection1": conn1,
-        "connection2": conn2,
         "streaming": {
             "capability": streaming_capable,
             "maxConnections": state.config.streaming.max_connections,
@@ -97,8 +103,12 @@ pub async fn get_diagnostics(State(state): State<AppState>) -> impl IntoResponse
         },
     });
 
-    if sensor1 != Value::Null { diagnostics["sensor1"] = sensor1; }
-    if sensor2 != Value::Null { diagnostics["sensor2"] = sensor2; }
+    // Merge sensor configs, connections, and data into top-level object
+    if let Some(obj) = diagnostics.as_object_mut() {
+        for (k, v) in sensor_configs { obj.insert(k, v); }
+        for (k, v) in sensor_connections { obj.insert(k, v); }
+        for (k, v) in sensor_data_map { obj.insert(k, v); }
+    }
 
     Json(diagnostics).into_response()
 }

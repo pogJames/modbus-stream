@@ -13,6 +13,7 @@ pub async fn raw_stream_page_sensor(
     state.render_template("view_raw.html", "", context! {
         title => "Raw Data Stream",
         sensor => sensor,
+        sensor_count => state.sensor_count(),
     })
 }
 
@@ -26,7 +27,8 @@ pub async fn metrics_stream_page_sensor(
 ) -> Html<String> {
     state.render_template("view_metrics.html", "", context! {
         title => "Metrics Stream",
-        sensor => sensor
+        sensor => sensor,
+        sensor_count => state.sensor_count(),
     })
 }
 
@@ -46,7 +48,8 @@ pub async fn all_metrics_page_sensor(
 ) -> Html<String> {
     state.render_template("view_all_metrics.html", "", context! {
         title => "Sensor Metrics",
-        sensor => sensor
+        sensor => sensor,
+        sensor_count => state.sensor_count(),
     })
 }
 

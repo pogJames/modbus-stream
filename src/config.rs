@@ -5,8 +5,7 @@ use std::path::Path;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub server: ServerConfig,
-    pub modbus1: ModbusConfig,
-    pub modbus2: ModbusConfig,
+    pub sensors: Vec<ModbusConfig>,
     pub streaming: StreamingConfig,
     pub logging: LoggingConfig,
 }
@@ -42,6 +41,16 @@ pub struct LoggingConfig {
     pub format: String,
 }
 
+fn default_sensor(device: &str) -> ModbusConfig {
+    ModbusConfig {
+        device: device.to_string(),
+        baud_rate: 115200,
+        slave_id: 1,
+        timeout_ms: 5000,
+        retry_attempts: 3,
+    }
+}
+
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
@@ -50,20 +59,12 @@ impl Default for AppConfig {
                 port: 3000,
                 cors_origins: vec!["*".to_string()],
             },
-            modbus1: ModbusConfig {
-                device: "/dev/ttyUSB0".to_string(),
-                baud_rate: 115200,
-                slave_id: 1,
-                timeout_ms: 5000,
-                retry_attempts: 3,
-            },
-            modbus2: ModbusConfig {
-                device: "/dev/ttyUSB1".to_string(),
-                baud_rate: 115200,
-                slave_id: 1,
-                timeout_ms: 5000,
-                retry_attempts: 3,
-            },
+            sensors: vec![
+                default_sensor("/dev/ttyUSB0"),
+                default_sensor("/dev/ttyUSB1"),
+                default_sensor("/dev/ttyUSB2"),
+                default_sensor("/dev/ttyUSB3"),
+            ],
             streaming: StreamingConfig {
                 max_connections: 10,
                 buffer_size: 1024,
@@ -106,19 +107,20 @@ impl AppConfig {
             anyhow::bail!("Server port cannot be 0");
         }
 
-        // Validate modbus configs
-        if self.modbus1.slave_id == 0 {
-            anyhow::bail!("Modbus1 slave ID cannot be 0");
-        }
-        if self.modbus2.slave_id == 0 {
-            anyhow::bail!("Modbus2 slave ID cannot be 0");
+        // Validate sensor configs
+        if self.sensors.is_empty() {
+            anyhow::bail!("At least one sensor must be configured");
         }
 
-        for (label, baud) in [("modbus1", self.modbus1.baud_rate), ("modbus2", self.modbus2.baud_rate)] {
-            if ![115200, 3000000].contains(&baud) {
+        for (i, sensor) in self.sensors.iter().enumerate() {
+            let label = format!("sensor{}", i + 1);
+            if sensor.slave_id == 0 {
+                anyhow::bail!("{} slave ID cannot be 0", label);
+            }
+            if ![115200, 3000000].contains(&sensor.baud_rate) {
                 tracing::warn!(
                     "Unusual baud rate {} for {}. Sensor supports 115200 or 3000000 bps",
-                    baud, label
+                    sensor.baud_rate, label
                 );
             }
         }
@@ -192,7 +194,7 @@ mod tests {
         let loaded_config = AppConfig::load(temp_file.path()).unwrap();
         
         assert_eq!(config.server.port, loaded_config.server.port);
-        assert_eq!(config.modbus1.slave_id, loaded_config.modbus1.slave_id);
+        assert_eq!(config.sensors[0].slave_id, loaded_config.sensors[0].slave_id);
     }
 
     #[test]
@@ -205,11 +207,11 @@ mod tests {
         
         // Test invalid slave ID
         config.server.port = 3000;
-        config.modbus1.slave_id = 0;
+        config.sensors[0].slave_id = 0;
         assert!(config.validate().is_err());
 
         // Test valid config
-        config.modbus1.slave_id = 1;
+        config.sensors[0].slave_id = 1;
         assert!(config.validate().is_ok());
     }
 }

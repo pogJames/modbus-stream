@@ -140,23 +140,21 @@ pub async fn test_connection_handler(
     }
 }
 
-/// GET /settings/status - Get current status for both sensors (for HTMX polling)
+/// GET /settings/status - Get current status for all sensors (for HTMX polling)
 pub async fn get_status_handler(State(state): State<AppState>) -> impl IntoResponse {
     let now = Utc::now();
-    let (status1, status2) = tokio::join!(
-        check_sensor(&state.modbus_client1, "Sensor 1"),
-        check_sensor(&state.modbus_client2, "Sensor 2"),
-    );
-
-    let html1 = state.render_template_fragment("settings/status-header.html", context! {
-        sensor => status1,
-    });
-    let html2 = state.render_template_fragment("settings/status-header.html", context! {
-        sensor => status2,
-    });
+    let mut cards_html = String::new();
+    for (i, client_arc) in state.modbus_clients.iter().enumerate() {
+        let label = format!("Sensor {}", i + 1);
+        let status = check_sensor(client_arc, &label).await;
+        let card = state.render_template_fragment("settings/status-header.html", context! {
+            sensor => status,
+        });
+        cards_html.push_str(&card.0);
+    }
     Html(format!(
-        r#"<div class="sensor-status-grid">{}{}</div><div class="sensor-status-footer">Last updated: {}</div>"#,
-        html1.0, html2.0, now.format("%H:%M:%S UTC")
+        r#"<div class="sensor-status-grid">{}</div><div class="sensor-status-footer">Last updated: {}</div>"#,
+        cards_html, now.format("%H:%M:%S UTC")
     ))
 }
 
@@ -470,8 +468,10 @@ fn validate_settings(form: &SettingsForm) -> Result<(), ValidationErrors> {
 async fn apply_settings_to_system(state: &AppState, settings: &SettingsForm) -> anyhow::Result<Vec<String>> {
     let mut details = Vec::new();
 
-    // Check if client is available
-    let client_guard = state.modbus_client1.read().await;
+    // Check if client is available (applies settings to sensor 1)
+    let client_arc = state.modbus_clients.first()
+        .ok_or_else(|| anyhow::anyhow!("No sensors configured"))?;
+    let client_guard = client_arc.read().await;
     match &*client_guard {
         Some(client) => {
             // Apply sensor settings via Modbus
@@ -491,7 +491,7 @@ async fn apply_settings_to_system(state: &AppState, settings: &SettingsForm) -> 
             details.push(format!("High pass filter: {}", if settings.high_pass_filter { "enabled" } else { "disabled" }));
 
             // Handle baud rate change (requires special handling)
-            if settings.baud_rate != state.config.modbus1.baud_rate {
+            if settings.baud_rate != state.config.sensors.first().map(|s| s.baud_rate).unwrap_or(115200) {
                 if let Err(e) = client.set_baud_rate(settings.baud_rate).await {
                     return Err(anyhow::anyhow!("Failed to set baud rate: {}", e));
                 }
@@ -506,17 +506,18 @@ async fn apply_settings_to_system(state: &AppState, settings: &SettingsForm) -> 
         }
     }
 
-    // Update configuration file with new settings
+    // Update configuration file with new settings (updates sensor 1 connection params)
+    let mut new_sensors = state.config.sensors.clone();
+    if let Some(s) = new_sensors.first_mut() {
+        s.device = settings.device_path.clone();
+        s.baud_rate = settings.baud_rate;
+        s.slave_id = settings.slave_id;
+        s.timeout_ms = settings.timeout_ms;
+        s.retry_attempts = settings.retry_attempts;
+    }
     let new_config = AppConfig {
         server: state.config.server.clone(),
-        modbus1: crate::config::ModbusConfig {
-            device: settings.device_path.clone(),
-            baud_rate: settings.baud_rate,
-            slave_id: settings.slave_id,
-            timeout_ms: settings.timeout_ms,
-            retry_attempts: settings.retry_attempts,
-        },
-        modbus2: state.config.modbus2.clone(),
+        sensors: new_sensors,
         streaming: crate::config::StreamingConfig {
             max_connections: settings.max_connections,
             buffer_size: settings.buffer_size,
@@ -539,10 +540,13 @@ async fn apply_settings_to_system(state: &AppState, settings: &SettingsForm) -> 
 }
 
 async fn test_connection_with_settings(state: &AppState, settings: &SettingsForm) -> anyhow::Result<String> {
-    // Check if settings differ from current configuration
-    let settings_differ = settings.device_path != state.config.modbus1.device
-        || settings.baud_rate != state.config.modbus1.baud_rate
-        || settings.slave_id != state.config.modbus1.slave_id;
+    // Check if settings differ from current configuration (sensor 1)
+    let s0 = state.config.sensors.first();
+    let settings_differ = s0.map_or(true, |s|
+        settings.device_path != s.device
+        || settings.baud_rate != s.baud_rate
+        || settings.slave_id != s.slave_id
+    );
 
     if settings_differ {
         // Create a temporary connection with the new settings
@@ -563,8 +567,10 @@ async fn test_connection_with_settings(state: &AppState, settings: &SettingsForm
             Err(e) => Err(anyhow::anyhow!("Failed to connect with new settings: {}", e)),
         }
     } else {
-        // Test the existing connection
-        let client_guard = state.modbus_client1.read().await;
+        // Test the existing connection (sensor 1)
+        let client_arc = state.modbus_clients.first()
+            .ok_or_else(|| anyhow::anyhow!("No sensors configured"))?;
+        let client_guard = client_arc.read().await;
         match &*client_guard {
             Some(client) => {
                 match client.test_connection().await {
@@ -586,8 +592,12 @@ async fn reset_to_default_settings(state: &AppState) -> anyhow::Result<()> {
     default_config.save(&state.config_path)?;
     info!("Configuration file reset to defaults");
 
-    // Reset sensor settings via Modbus if connected
-    let client_guard = state.modbus_client1.read().await;
+    // Reset sensor settings via Modbus if connected (sensor 1)
+    let client_arc = match state.modbus_clients.first() {
+        Some(c) => c,
+        None => return Ok(()),
+    };
+    let client_guard = client_arc.read().await;
     if let Some(client) = &*client_guard {
         // Reset to default sensor settings
         if let Err(e) = client.set_sample_rate(7812).await {
