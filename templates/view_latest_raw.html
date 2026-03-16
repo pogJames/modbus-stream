@@ -11,40 +11,74 @@
     </span>
   </div>
 
-  <div class="display-grid">
-    <div class="display-card x">
-      <div class="display-axis">X Axis</div>
-      <div class="display-value" id="val-x">—</div>
-      <div class="display-unit">g</div>
-    </div>
-    <div class="display-card y">
-      <div class="display-axis">Y Axis</div>
-      <div class="display-value" id="val-y">—</div>
-      <div class="display-unit">g</div>
-    </div>
-    <div class="display-card z">
-      <div class="display-axis">Z Axis</div>
-      <div class="display-value" id="val-z">—</div>
-      <div class="display-unit">g</div>
-    </div>
-  </div>
+  <div style="display:flex; flex-direction:column; gap:2rem;">
 
-  <div class="data-footer">
-    <span id="footer-ts">—</span>
-    <span>Refreshes every 500 ms</span>
+    <div>
+      <h2 style="margin-bottom:0.75rem; font-size:1rem; color:var(--text-muted);">Sensor 1</h2>
+      <div class="display-grid">
+        <div class="display-card x">
+          <div class="display-axis">X Axis</div>
+          <div class="display-value" id="s1-val-x">—</div>
+          <div class="display-unit">g</div>
+        </div>
+        <div class="display-card y">
+          <div class="display-axis">Y Axis</div>
+          <div class="display-value" id="s1-val-y">—</div>
+          <div class="display-unit">g</div>
+        </div>
+        <div class="display-card z">
+          <div class="display-axis">Z Axis</div>
+          <div class="display-value" id="s1-val-z">—</div>
+          <div class="display-unit">g</div>
+        </div>
+      </div>
+      <div class="data-footer">
+        <span id="s1-footer-ts">—</span>
+      </div>
+    </div>
+
+    <div>
+      <h2 style="margin-bottom:0.75rem; font-size:1rem; color:var(--text-muted);">Sensor 2</h2>
+      <div class="display-grid">
+        <div class="display-card x">
+          <div class="display-axis">X Axis</div>
+          <div class="display-value" id="s2-val-x">—</div>
+          <div class="display-unit">g</div>
+        </div>
+        <div class="display-card y">
+          <div class="display-axis">Y Axis</div>
+          <div class="display-value" id="s2-val-y">—</div>
+          <div class="display-unit">g</div>
+        </div>
+        <div class="display-card z">
+          <div class="display-axis">Z Axis</div>
+          <div class="display-value" id="s2-val-z">—</div>
+          <div class="display-unit">g</div>
+        </div>
+      </div>
+      <div class="data-footer">
+        <span id="s2-footer-ts">—</span>
+        <span>Refreshes every 500 ms</span>
+      </div>
+    </div>
+
   </div>
 
 </div>
 
 <script>
-const badge  = document.getElementById('poll-badge');
-const dot    = badge.querySelector('.badge-dot');
-const tsEl   = document.getElementById('footer-ts');
+const badge = document.getElementById('poll-badge');
 
 function fmt(v) {
   if (v == null) return '—';
   const sign = v < 0 ? '−' : '+';
   return sign + Math.abs(v).toFixed(4);
+}
+
+function fmtTs(ts) {
+  return 'Last: ' + new Date(ts).toLocaleTimeString([], {
+    hour: '2-digit', minute: '2-digit', second: '2-digit', fractionalSecondDigits: 3
+  });
 }
 
 function setOk() {
@@ -57,6 +91,14 @@ function setErr(msg) {
   badge.lastChild.textContent = ' ' + (msg || 'Error');
 }
 
+function updateSensor(prefix, d) {
+  if (!d) return;
+  document.getElementById(prefix + '-val-x').textContent = fmt(d.x);
+  document.getElementById(prefix + '-val-y').textContent = fmt(d.y);
+  document.getElementById(prefix + '-val-z').textContent = fmt(d.z);
+  document.getElementById(prefix + '-footer-ts').textContent = fmtTs(d.timestamp);
+}
+
 async function poll() {
   try {
     const res = await fetch('/read/latest-raw');
@@ -66,12 +108,8 @@ async function poll() {
       return;
     }
     const d = await res.json();
-    document.getElementById('val-x').textContent = fmt(d.x);
-    document.getElementById('val-y').textContent = fmt(d.y);
-    document.getElementById('val-z').textContent = fmt(d.z);
-    tsEl.textContent = 'Last: ' + new Date(d.timestamp).toLocaleTimeString([], {
-      hour: '2-digit', minute: '2-digit', second: '2-digit', fractionalSecondDigits: 3
-    });
+    updateSensor('s1', d.sensor1);
+    updateSensor('s2', d.sensor2);
     setOk();
   } catch (e) {
     setErr('Offline');

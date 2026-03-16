@@ -1,5 +1,5 @@
 use axum::{
-    extract::{State, WebSocketUpgrade, ws::{Message, WebSocket}},
+    extract::{Path, State, WebSocketUpgrade, ws::{Message, WebSocket}},
     http::StatusCode,
     response::{IntoResponse, Json},
 };
@@ -204,29 +204,65 @@ impl StreamManager {
 
 /// WebSocket handler for raw data streaming
 pub async fn websocket_raw_handler(
+    Path(sensor): Path<u8>,
     ws: WebSocketUpgrade,
     State(state): State<AppState>,
 ) -> impl IntoResponse {
-    ws.on_upgrade(|socket| handle_raw_websocket(socket, state))
+    let client = match sensor {
+        1 => state.modbus_client1.clone(),
+        2 => state.modbus_client2.clone(),
+        _ => {
+            return (StatusCode::NOT_FOUND, Json(ErrorResponse {
+                error: format!("Unknown sensor: {}", sensor),
+                code: Some("UNKNOWN_SENSOR".to_string()),
+                timestamp: chrono::Utc::now(),
+            })).into_response();
+        }
+    };
+    ws.on_upgrade(|socket| handle_raw_websocket(socket, client))
 }
 
 /// WebSocket handler for metrics streaming
 pub async fn websocket_metrics_handler(
+    Path(sensor): Path<u8>,
     ws: WebSocketUpgrade,
     State(state): State<AppState>,
 ) -> impl IntoResponse {
-    ws.on_upgrade(|socket| handle_metrics_websocket(socket, state))
+    let rx = match sensor {
+        1 => state.metrics_tx.subscribe(),
+        2 => state.metrics_tx2.subscribe(),
+        _ => {
+            return (StatusCode::NOT_FOUND, Json(ErrorResponse {
+                error: format!("Unknown sensor: {}", sensor),
+                code: Some("UNKNOWN_SENSOR".to_string()),
+                timestamp: chrono::Utc::now(),
+            })).into_response();
+        }
+    };
+    ws.on_upgrade(|socket| handle_metrics_websocket(socket, rx))
 }
 
 /// Start streaming
 pub async fn start_stream(
+    Path(sensor): Path<u8>,
     State(state): State<AppState>,
     Json(payload): Json<StreamStartRequest>,
 ) -> impl IntoResponse {
-    // Implementation for starting streaming
+    let baud_rate = match sensor {
+        1 => state.config.modbus1.baud_rate,
+        2 => state.config.modbus2.baud_rate,
+        _ => {
+            return (StatusCode::NOT_FOUND, Json(ErrorResponse {
+                error: format!("Unknown sensor: {}", sensor),
+                code: Some("UNKNOWN_SENSOR".to_string()),
+                timestamp: chrono::Utc::now(),
+            })).into_response();
+        }
+    };
+
     match payload.stream_type {
         StreamType::Raw => {
-            if state.config.modbus.baud_rate != 3000000 {
+            if baud_rate != 3000000 {
                 return (
                     StatusCode::BAD_REQUEST,
                     Json(ErrorResponse {
@@ -254,7 +290,10 @@ pub async fn start_stream(
 }
 
 /// Stop streaming
-pub async fn stop_stream(State(_state): State<AppState>) -> impl IntoResponse {
+pub async fn stop_stream(
+    Path(sensor): Path<u8>,
+    State(_state): State<AppState>,
+) -> impl IntoResponse {
     info!("Stopping stream");
     (
         StatusCode::OK,
@@ -267,7 +306,10 @@ pub async fn stop_stream(State(_state): State<AppState>) -> impl IntoResponse {
 }
 
 /// Get stream status
-pub async fn get_stream_status(State(_state): State<AppState>) -> impl IntoResponse {
+pub async fn get_stream_status(
+    Path(sensor): Path<u8>,
+    State(_state): State<AppState>,
+) -> impl IntoResponse {
     // For now, return a static status
     // In a real implementation, this would check the actual streaming state
     let status = StreamStatus {
@@ -282,7 +324,7 @@ pub async fn get_stream_status(State(_state): State<AppState>) -> impl IntoRespo
 }
 
 /// Handle raw data WebSocket connection
-async fn handle_raw_websocket(mut socket: WebSocket, state: AppState) {
+async fn handle_raw_websocket(mut socket: WebSocket, client: Arc<tokio::sync::RwLock<Option<ModbusClient>>>) {
     info!("New raw data WebSocket connection");
 
     // Send initial status
@@ -303,7 +345,7 @@ async fn handle_raw_websocket(mut socket: WebSocket, state: AppState) {
     }
 
     // Create a stream manager for this connection
-    let stream_manager = Arc::new(StreamManager::new(state.modbus_client.clone()));
+    let stream_manager = Arc::new(StreamManager::new(client));
 
     // Start raw data streaming
     let (tx, mut rx) = broadcast::channel(1000);
@@ -385,7 +427,7 @@ async fn handle_raw_websocket(mut socket: WebSocket, state: AppState) {
 }
 
 /// Handle metrics WebSocket connection — subscribes to the shared background reader in AppState.
-async fn handle_metrics_websocket(mut socket: WebSocket, state: AppState) {
+async fn handle_metrics_websocket(mut socket: WebSocket, mut rx: broadcast::Receiver<WebSocketMessage>) {
     info!("New metrics WebSocket connection");
 
     let status_message = match serde_json::to_string(&WebSocketMessage::Status {
@@ -402,9 +444,6 @@ async fn handle_metrics_websocket(mut socket: WebSocket, state: AppState) {
     if socket.send(Message::Text(status_message.into())).await.is_err() {
         return;
     }
-
-    // Subscribe to the single shared metrics broadcast channel
-    let mut rx = state.metrics_tx.subscribe();
 
     loop {
         tokio::select! {

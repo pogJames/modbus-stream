@@ -11,6 +11,11 @@
     </span>
   </div>
 
+  <div class="tabs-list" style="margin-bottom:1.5rem;">
+    <a href="/1/view/all-metrics" class="tabs-trigger{% if sensor == 1 %} active{% endif %}">Sensor 1</a>
+    <a href="/2/view/all-metrics" class="tabs-trigger{% if sensor == 2 %} active{% endif %}">Sensor 2</a>
+  </div>
+
   <!-- Temperature -->
   <div class="temp-section">
     <span class="temp-label">Temperature</span>
@@ -124,7 +129,7 @@ function s(id, v) {
   if (el) el.textContent = v;
 }
 
-const ws = new WebSocket(`ws://${location.host}/stream/metrics`);
+const ws = new WebSocket(`ws://${location.host}/{{ sensor }}/stream/metrics`);
 
 ws.onopen = () => {
   badge.className = 'badge ok';

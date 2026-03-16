@@ -5,7 +5,8 @@ use std::path::Path;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub server: ServerConfig,
-    pub modbus: ModbusConfig,
+    pub modbus1: ModbusConfig,
+    pub modbus2: ModbusConfig,
     pub streaming: StreamingConfig,
     pub logging: LoggingConfig,
 }
@@ -49,8 +50,15 @@ impl Default for AppConfig {
                 port: 3000,
                 cors_origins: vec!["*".to_string()],
             },
-            modbus: ModbusConfig {
+            modbus1: ModbusConfig {
                 device: "/dev/ttyUSB0".to_string(),
+                baud_rate: 115200,
+                slave_id: 1,
+                timeout_ms: 5000,
+                retry_attempts: 3,
+            },
+            modbus2: ModbusConfig {
+                device: "/dev/ttyUSB1".to_string(),
                 baud_rate: 115200,
                 slave_id: 1,
                 timeout_ms: 5000,
@@ -98,16 +106,21 @@ impl AppConfig {
             anyhow::bail!("Server port cannot be 0");
         }
 
-        // Validate modbus config
-        if self.modbus.slave_id == 0 {
-            anyhow::bail!("Modbus slave ID cannot be 0");
+        // Validate modbus configs
+        if self.modbus1.slave_id == 0 {
+            anyhow::bail!("Modbus1 slave ID cannot be 0");
+        }
+        if self.modbus2.slave_id == 0 {
+            anyhow::bail!("Modbus2 slave ID cannot be 0");
         }
 
-        if ![115200, 3000000].contains(&self.modbus.baud_rate) {
-            tracing::warn!(
-                "Unusual baud rate {}. Sensor supports 115200 or 3000000 bps",
-                self.modbus.baud_rate
-            );
+        for (label, baud) in [("modbus1", self.modbus1.baud_rate), ("modbus2", self.modbus2.baud_rate)] {
+            if ![115200, 3000000].contains(&baud) {
+                tracing::warn!(
+                    "Unusual baud rate {} for {}. Sensor supports 115200 or 3000000 bps",
+                    baud, label
+                );
+            }
         }
 
         // Validate streaming config
@@ -179,7 +192,7 @@ mod tests {
         let loaded_config = AppConfig::load(temp_file.path()).unwrap();
         
         assert_eq!(config.server.port, loaded_config.server.port);
-        assert_eq!(config.modbus.slave_id, loaded_config.modbus.slave_id);
+        assert_eq!(config.modbus1.slave_id, loaded_config.modbus1.slave_id);
     }
 
     #[test]
@@ -192,11 +205,11 @@ mod tests {
         
         // Test invalid slave ID
         config.server.port = 3000;
-        config.modbus.slave_id = 0;
+        config.modbus1.slave_id = 0;
         assert!(config.validate().is_err());
-        
+
         // Test valid config
-        config.modbus.slave_id = 1;
+        config.modbus1.slave_id = 1;
         assert!(config.validate().is_ok());
     }
 }

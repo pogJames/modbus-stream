@@ -11,63 +11,114 @@
     </span>
   </div>
 
-  <!-- Connection + Sensor row -->
-  <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:0.75rem; margin-bottom:1.5rem;">
+  <!-- Sensor 1 row -->
+  <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:0.75rem; margin-bottom:0.75rem;">
 
-    <!-- Connection status -->
     <div class="card">
-      <div class="section-label">Sensor</div>
+      <div class="section-label">Sensor 1</div>
       <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.625rem 1rem;">
         <div>
           <div style="font-size:0.65rem;color:var(--muted-foreground);text-transform:uppercase;letter-spacing:1px;margin-bottom:2px;">Model</div>
-          <div style="font-weight:600;font-size:0.875rem;" id="s-model">—</div>
+          <div style="font-weight:600;font-size:0.875rem;" id="s1-model">—</div>
         </div>
         <div>
           <div style="font-size:0.65rem;color:var(--muted-foreground);text-transform:uppercase;letter-spacing:1px;margin-bottom:2px;">Gain</div>
-          <div style="font-weight:600;font-size:0.875rem;" id="s-gain">—</div>
+          <div style="font-weight:600;font-size:0.875rem;" id="s1-gain">—</div>
         </div>
         <div>
           <div style="font-size:0.65rem;color:var(--muted-foreground);text-transform:uppercase;letter-spacing:1px;margin-bottom:2px;">Serial</div>
-          <div style="font-family:'JetBrains Mono',monospace;font-size:0.8125rem;" id="s-serial">—</div>
+          <div style="font-family:'JetBrains Mono',monospace;font-size:0.8125rem;" id="s1-serial">—</div>
         </div>
         <div>
           <div style="font-size:0.65rem;color:var(--muted-foreground);text-transform:uppercase;letter-spacing:1px;margin-bottom:2px;">Firmware</div>
-          <div style="font-family:'JetBrains Mono',monospace;font-size:0.8125rem;" id="s-fw">—</div>
+          <div style="font-family:'JetBrains Mono',monospace;font-size:0.8125rem;" id="s1-fw">—</div>
         </div>
         <div>
           <div style="font-size:0.65rem;color:var(--muted-foreground);text-transform:uppercase;letter-spacing:1px;margin-bottom:2px;">Temperature</div>
-          <div style="font-family:'JetBrains Mono',monospace;font-size:0.8125rem;color:#a855f7;" id="s-temp">—</div>
+          <div style="font-family:'JetBrains Mono',monospace;font-size:0.8125rem;color:#a855f7;" id="s1-temp">—</div>
         </div>
         <div>
           <div style="font-size:0.65rem;color:var(--muted-foreground);text-transform:uppercase;letter-spacing:1px;margin-bottom:2px;">FIFO</div>
-          <div style="font-family:'JetBrains Mono',monospace;font-size:0.8125rem;" id="s-fifo">—</div>
+          <div style="font-family:'JetBrains Mono',monospace;font-size:0.8125rem;" id="s1-fifo">—</div>
         </div>
       </div>
     </div>
 
-    <!-- Modbus config -->
     <div class="card">
-      <div class="section-label">Modbus Config</div>
+      <div class="section-label">Modbus Config 1</div>
       <div style="display:grid; gap:0.5rem;">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <span style="font-size:0.8rem;color:var(--muted-foreground);">Connection</span>
+          <span class="badge" id="c1-conn-badge"><span class="badge-dot"></span> —</span>
+        </div>
         <div style="display:flex; justify-content:space-between; align-items:baseline;">
           <span style="font-size:0.8rem;color:var(--muted-foreground);">Device</span>
-          <span style="font-family:'JetBrains Mono',monospace;font-size:0.8125rem;" id="c-device">—</span>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:0.8125rem;" id="c1-device">—</span>
         </div>
         <div style="display:flex; justify-content:space-between; align-items:baseline;">
           <span style="font-size:0.8rem;color:var(--muted-foreground);">Baud Rate</span>
-          <span style="font-family:'JetBrains Mono',monospace;font-size:0.8125rem;" id="c-baud">—</span>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:0.8125rem;" id="c1-baud">—</span>
         </div>
         <div style="display:flex; justify-content:space-between; align-items:baseline;">
           <span style="font-size:0.8rem;color:var(--muted-foreground);">Slave ID</span>
-          <span style="font-family:'JetBrains Mono',monospace;font-size:0.8125rem;" id="c-slave">—</span>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:0.8125rem;" id="c1-slave">—</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Sensor 2 row -->
+  <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:0.75rem; margin-bottom:1.5rem;">
+
+    <div class="card">
+      <div class="section-label">Sensor 2</div>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.625rem 1rem;">
+        <div>
+          <div style="font-size:0.65rem;color:var(--muted-foreground);text-transform:uppercase;letter-spacing:1px;margin-bottom:2px;">Model</div>
+          <div style="font-weight:600;font-size:0.875rem;" id="s2-model">—</div>
+        </div>
+        <div>
+          <div style="font-size:0.65rem;color:var(--muted-foreground);text-transform:uppercase;letter-spacing:1px;margin-bottom:2px;">Gain</div>
+          <div style="font-weight:600;font-size:0.875rem;" id="s2-gain">—</div>
+        </div>
+        <div>
+          <div style="font-size:0.65rem;color:var(--muted-foreground);text-transform:uppercase;letter-spacing:1px;margin-bottom:2px;">Serial</div>
+          <div style="font-family:'JetBrains Mono',monospace;font-size:0.8125rem;" id="s2-serial">—</div>
+        </div>
+        <div>
+          <div style="font-size:0.65rem;color:var(--muted-foreground);text-transform:uppercase;letter-spacing:1px;margin-bottom:2px;">Firmware</div>
+          <div style="font-family:'JetBrains Mono',monospace;font-size:0.8125rem;" id="s2-fw">—</div>
+        </div>
+        <div>
+          <div style="font-size:0.65rem;color:var(--muted-foreground);text-transform:uppercase;letter-spacing:1px;margin-bottom:2px;">Temperature</div>
+          <div style="font-family:'JetBrains Mono',monospace;font-size:0.8125rem;color:#a855f7;" id="s2-temp">—</div>
+        </div>
+        <div>
+          <div style="font-size:0.65rem;color:var(--muted-foreground);text-transform:uppercase;letter-spacing:1px;margin-bottom:2px;">FIFO</div>
+          <div style="font-family:'JetBrains Mono',monospace;font-size:0.8125rem;" id="s2-fifo">—</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="section-label">Modbus Config 2</div>
+      <div style="display:grid; gap:0.5rem;">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <span style="font-size:0.8rem;color:var(--muted-foreground);">Connection</span>
+          <span class="badge" id="c2-conn-badge"><span class="badge-dot"></span> —</span>
         </div>
         <div style="display:flex; justify-content:space-between; align-items:baseline;">
-          <span style="font-size:0.8rem;color:var(--muted-foreground);">Timeout</span>
-          <span style="font-family:'JetBrains Mono',monospace;font-size:0.8125rem;" id="c-timeout">—</span>
+          <span style="font-size:0.8rem;color:var(--muted-foreground);">Device</span>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:0.8125rem;" id="c2-device">—</span>
         </div>
         <div style="display:flex; justify-content:space-between; align-items:baseline;">
-          <span style="font-size:0.8rem;color:var(--muted-foreground);">Retry Attempts</span>
-          <span style="font-family:'JetBrains Mono',monospace;font-size:0.8125rem;" id="c-retry">—</span>
+          <span style="font-size:0.8rem;color:var(--muted-foreground);">Baud Rate</span>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:0.8125rem;" id="c2-baud">—</span>
+        </div>
+        <div style="display:flex; justify-content:space-between; align-items:baseline;">
+          <span style="font-size:0.8rem;color:var(--muted-foreground);">Slave ID</span>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:0.8125rem;" id="c2-slave">—</span>
         </div>
       </div>
     </div>
@@ -155,33 +206,57 @@ function setErr(msg) {
   pollBadge.lastChild.textContent = ' ' + (msg || 'Error');
 }
 
+function fillBaud(id, baud) {
+  s(id, baud != null ? (baud >= 1000000 ? (baud / 1000000).toFixed(0) + ' Mbps' : baud + ' bps') : '—');
+}
+
+function fillConnBadge(badgeId, conn) {
+  const b = document.getElementById(badgeId);
+  if (!b) return;
+  if (conn?.connected === true) {
+    b.className = 'badge ok';
+    b.lastChild.textContent = ' Connected';
+  } else if (conn?.status === 'no_device') {
+    b.className = 'badge warn';
+    b.lastChild.textContent = ' No device';
+  } else {
+    b.className = 'badge err';
+    b.lastChild.textContent = ' Error';
+  }
+}
+
+function fillSensor(prefix, sens) {
+  if (sens) {
+    s(prefix + '-model',  sens.ucid?.model);
+    s(prefix + '-gain',   sens.ucid?.gain);
+    s(prefix + '-serial', sens.ucid?.serialNumber);
+    s(prefix + '-fw',     sens.firmwareVersion?.value);
+    s(prefix + '-temp',   sens.temperature?.value != null ? sens.temperature.value.toFixed(1) + ' °C' : '—');
+    s(prefix + '-fifo',   sens.fifoBufferSize?.value != null ? sens.fifoBufferSize.value + ' samples' : '—');
+  } else {
+    ['-model','-gain','-serial','-fw','-temp','-fifo'].forEach(f => s(prefix + f, '—'));
+  }
+}
+
 async function poll() {
   try {
     const res = await fetch('/diagnostics');
     if (!res.ok) { setErr('HTTP ' + res.status); return; }
     const d = await res.json();
 
-    // Sensor
-    const sens = d.sensor;
-    if (sens) {
-      s('s-model',  sens.ucid?.model);
-      s('s-gain',   sens.ucid?.gain);
-      s('s-serial', sens.ucid?.serialNumber);
-      s('s-fw',     sens.firmwareVersion?.value);
-      s('s-temp',   sens.temperature?.value != null ? sens.temperature.value.toFixed(1) + ' °C' : '—');
-      s('s-fifo',   sens.fifoBufferSize?.value != null ? sens.fifoBufferSize.value + ' samples' : '—');
-    } else {
-      ['s-model','s-gain','s-serial','s-fw','s-temp','s-fifo'].forEach(id => s(id, '—'));
-    }
+    // Sensor 1
+    fillSensor('s1', d.sensor1);
+    fillConnBadge('c1-conn-badge', d.connection1);
+    s('c1-device', d.config1?.device);
+    fillBaud('c1-baud', d.config1?.baudRate);
+    s('c1-slave',  d.config1?.slaveId);
 
-    // Config
-    const cfg = d.config;
-    s('c-device',  cfg?.device);
-    const baud = cfg?.baudRate;
-    s('c-baud', baud ? (baud >= 1000000 ? (baud / 1000000).toFixed(0) + ' Mbps' : baud + ' bps') : '—');
-    s('c-slave',   cfg?.slaveId);
-    s('c-timeout', cfg?.timeout != null ? cfg.timeout + ' ms' : '—');
-    s('c-retry',   cfg?.retryAttempts);
+    // Sensor 2
+    fillSensor('s2', d.sensor2);
+    fillConnBadge('c2-conn-badge', d.connection2);
+    s('c2-device', d.config2?.device);
+    fillBaud('c2-baud', d.config2?.baudRate);
+    s('c2-slave',  d.config2?.slaveId);
 
     // Streaming
     const str = d.streaming;

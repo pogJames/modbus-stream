@@ -68,12 +68,14 @@ impl Default for RecordingState {
 
 #[derive(Clone)]
 pub struct AppState {
-    modbus_client: Arc<tokio::sync::RwLock<Option<ModbusClient>>>,
+    modbus_client1: Arc<tokio::sync::RwLock<Option<ModbusClient>>>,
+    modbus_client2: Arc<tokio::sync::RwLock<Option<ModbusClient>>>,
     config: Arc<AppConfig>,
     config_path: String,
     template_env: Arc<AutoReloader>,
     /// Shared metrics broadcaster — one background reader, all WebSocket clients subscribe here.
     pub metrics_tx: broadcast::Sender<types::WebSocketMessage>,
+    pub metrics_tx2: broadcast::Sender<types::WebSocketMessage>,
     recording: Arc<tokio::sync::Mutex<RecordingState>>,
 }
 
@@ -318,20 +320,24 @@ async fn main() -> Result<()> {
     let config = AppConfig::load(&args.config)?;
     info!("Loaded configuration from {}", args.config);
 
-    // Lower FTDI latency before touching the serial port
-    let device_path = args.device.unwrap_or_else(|| config.modbus.device.clone());
-    set_ftdi_latency(&device_path);
-    let baud_rate = if args.baud_rate != 115200 {
-        args.baud_rate
-    } else {
-        config.modbus.baud_rate
-    };
+    // Lower FTDI latency before touching the serial ports
+    let device1 = args.device.unwrap_or_else(|| config.modbus1.device.clone());
+    set_ftdi_latency(&device1);
+    let baud1 = if args.baud_rate != 115200 { args.baud_rate } else { config.modbus1.baud_rate };
 
-    let modbus_client = run_startup_diagnostics(
-        &device_path,
-        baud_rate,
+    let modbus_client1 = run_startup_diagnostics(
+        &device1,
+        baud1,
         args.slave_id,
-        config.modbus.timeout_ms,
+        config.modbus1.timeout_ms,
+    ).await;
+
+    set_ftdi_latency(&config.modbus2.device.clone());
+    let modbus_client2 = run_startup_diagnostics(
+        &config.modbus2.device,
+        config.modbus2.baud_rate,
+        config.modbus2.slave_id,
+        config.modbus2.timeout_ms,
     ).await;
 
     // Setup template auto-reloader
@@ -347,10 +353,12 @@ async fn main() -> Result<()> {
         Ok(env)
     }));
 
-    let modbus_arc = Arc::new(tokio::sync::RwLock::new(modbus_client));
+    let modbus_arc1 = Arc::new(tokio::sync::RwLock::new(modbus_client1));
+    let modbus_arc2 = Arc::new(tokio::sync::RwLock::new(modbus_client2));
 
     // Shared metrics broadcast channel (capacity 16 — clients only need the latest)
     let (metrics_tx, _) = broadcast::channel::<types::WebSocketMessage>(16);
+    let (metrics_tx2, _) = broadcast::channel::<types::WebSocketMessage>(16);
 
     // Single shared background metrics reader — runs only when clients are subscribed.
     // Skewness and kurtosis update every 2–5 s on the sensor (per datasheet), so they
@@ -362,7 +370,7 @@ async fn main() -> Result<()> {
     // Slow-path task: reads skewness + kurtosis every 5 s, but only when metrics
     // clients are connected — skips entirely otherwise so the raw stream is never blocked.
     {
-        let mc = modbus_arc.clone();
+        let mc = modbus_arc1.clone();
         let cache = slow_cache.clone();
         let tx = metrics_tx.clone();
         tokio::spawn(async move {
@@ -388,7 +396,7 @@ async fn main() -> Result<()> {
 
     // Fast-path task: reads 6 metrics every ~1 s, uses cached skew/kurt — no stutter.
     {
-        let mc = modbus_arc.clone();
+        let mc = modbus_arc1.clone();
         let tx = metrics_tx.clone();
         let cache = slow_cache;
         tokio::spawn(async move {
@@ -449,13 +457,108 @@ async fn main() -> Result<()> {
         });
     }
 
+    // Shared cache for sensor 2 skewness + kurtosis (updated every 5 s on a separate task).
+    let slow_cache2: Arc<tokio::sync::Mutex<Option<(types::AccelerationData, types::AccelerationData)>>> =
+        Arc::new(tokio::sync::Mutex::new(None));
+
+    // Slow-path task for sensor 2: reads skewness + kurtosis every 5 s.
+    {
+        let mc = modbus_arc2.clone();
+        let cache = slow_cache2.clone();
+        let tx = metrics_tx2.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(5)).await;
+                if tx.receiver_count() == 0 {
+                    continue;
+                }
+                let guard = mc.read().await;
+                if let Some(client) = &*guard {
+                    match (client.read_gravity_skewness().await,
+                           client.read_gravity_kurtosis().await) {
+                        (Ok(s), Ok(k)) => { *cache.lock().await = Some((s, k)); }
+                        (Err(e), _) | (_, Err(e)) => {
+                            error!("Slow metrics2 read error: {}", e);
+                        }
+                    }
+                }
+                drop(guard);
+            }
+        });
+    }
+
+    // Fast-path task for sensor 2: reads 6 metrics every ~1 s, uses cached skew/kurt.
+    {
+        let mc = modbus_arc2.clone();
+        let tx = metrics_tx2.clone();
+        let cache = slow_cache2;
+        tokio::spawn(async move {
+            loop {
+                if tx.receiver_count() == 0 {
+                    tokio::time::sleep(Duration::from_millis(200)).await;
+                    continue;
+                }
+
+                let cycle_start = tokio::time::Instant::now();
+
+                let guard = mc.read().await;
+                match &*guard {
+                    Some(client) => {
+                        let g_rms  = client.read_gravity_rms().await;
+                        let g_peak = client.read_gravity_peak().await;
+                        let g_cf   = client.read_gravity_crest_factor().await;
+                        let g_freq = client.read_gravity_primary_frequency().await;
+                        let vel    = client.read_velocity_metrics().await;
+                        let temp   = client.read_temperature().await;
+                        drop(guard);
+
+                        match (g_rms, g_peak, g_cf, g_freq, vel, temp) {
+                            (Ok(rms), Ok(peak), Ok(crest_factor), Ok(primary_frequency),
+                             Ok(velocity), Ok(temperature)) => {
+                                if let Some((skewness, kurtosis)) = cache.lock().await.clone() {
+                                    let _ = tx.send(types::WebSocketMessage::Metrics {
+                                        timestamp: chrono::Utc::now(),
+                                        gravity: types::GravityMetrics {
+                                            rms,
+                                            peak,
+                                            crest_factor,
+                                            skewness,
+                                            kurtosis,
+                                            primary_frequency,
+                                        },
+                                        velocity,
+                                        temperature,
+                                    });
+                                }
+                                let elapsed = cycle_start.elapsed();
+                                if elapsed < Duration::from_secs(1) {
+                                    tokio::time::sleep(Duration::from_secs(1) - elapsed).await;
+                                }
+                            }
+                            _ => {
+                                error!("Fast metrics2 read error");
+                                tokio::time::sleep(Duration::from_millis(500)).await;
+                            }
+                        }
+                    }
+                    None => {
+                        drop(guard);
+                        tokio::time::sleep(Duration::from_millis(1000)).await;
+                    }
+                }
+            }
+        });
+    }
+
     // Create application state
     let state = AppState {
-        modbus_client: modbus_arc,
+        modbus_client1: modbus_arc1,
+        modbus_client2: modbus_arc2,
         config: Arc::new(config),
         config_path: args.config.clone(),
         template_env,
         metrics_tx,
+        metrics_tx2,
         recording: Arc::new(tokio::sync::Mutex::new(RecordingState::default())),
     };
 
@@ -475,37 +578,38 @@ async fn main() -> Result<()> {
         .route("/config/stream-size", put(routes::config::set_stream_size))
         
         // Read routes - System info
-        .route("/read/temperature", get(routes::read::get_temperature))
-        .route("/read/ucid", get(routes::read::get_ucid))
-        .route("/read/firmware-version", get(routes::read::get_firmware_version))
-        .route("/read/chip-id", get(routes::read::get_chip_id))
-        .route("/read/fifo-buffer-size", get(routes::read::get_fifo_buffer_size))
-        .route("/read/latest-raw", get(routes::read::get_latest_raw))
-        
+        .route("/{sensor}/read/temperature", get(routes::read::get_temperature))
+        .route("/{sensor}/read/ucid", get(routes::read::get_ucid))
+        .route("/{sensor}/read/firmware-version", get(routes::read::get_firmware_version))
+        .route("/{sensor}/read/chip-id", get(routes::read::get_chip_id))
+        .route("/{sensor}/read/fifo-buffer-size", get(routes::read::get_fifo_buffer_size))
+        .route("/{sensor}/read/latest-raw", get(routes::read::get_latest_raw))
+
         // Read routes - Gravity metrics
-        .route("/read/gravity/rms", get(routes::read::get_gravity_rms))
-        .route("/read/gravity/peak", get(routes::read::get_gravity_peak))
-        .route("/read/gravity/crest-factor", get(routes::read::get_gravity_crest_factor))
-        .route("/read/gravity/skewness", get(routes::read::get_gravity_skewness))
-        .route("/read/gravity/kurtosis", get(routes::read::get_gravity_kurtosis))
-        .route("/read/gravity/primary-frequency", get(routes::read::get_gravity_primary_frequency))
-        
+        .route("/{sensor}/read/gravity/rms", get(routes::read::get_gravity_rms))
+        .route("/{sensor}/read/gravity/peak", get(routes::read::get_gravity_peak))
+        .route("/{sensor}/read/gravity/crest-factor", get(routes::read::get_gravity_crest_factor))
+        .route("/{sensor}/read/gravity/skewness", get(routes::read::get_gravity_skewness))
+        .route("/{sensor}/read/gravity/kurtosis", get(routes::read::get_gravity_kurtosis))
+        .route("/{sensor}/read/gravity/primary-frequency", get(routes::read::get_gravity_primary_frequency))
+
         // Read routes - Velocity metrics
-        .route("/read/velocity/rms", get(routes::read::get_velocity_rms))
-        .route("/read/velocity/peak", get(routes::read::get_velocity_peak))
-        .route("/read/velocity/crest-factor", get(routes::read::get_velocity_crest_factor))
-        .route("/read/velocity/primary-frequency", get(routes::read::get_velocity_primary_frequency))
-        
+        .route("/{sensor}/read/velocity/rms", get(routes::read::get_velocity_rms))
+        .route("/{sensor}/read/velocity/peak", get(routes::read::get_velocity_peak))
+        .route("/{sensor}/read/velocity/crest-factor", get(routes::read::get_velocity_crest_factor))
+        .route("/{sensor}/read/velocity/primary-frequency", get(routes::read::get_velocity_primary_frequency))
+
         // Read routes - Bulk
-        .route("/read/all-metrics", get(routes::read::get_all_metrics))
-        
+        .route("/{sensor}/read/all-metrics", get(routes::read::get_all_metrics))
+        .route("/read/latest-raw", get(routes::read::get_latest_raw_combined))
+
         // Stream routes
-        .route("/stream/raw", get(routes::stream::websocket_raw_handler))
-        .route("/stream/metrics", get(routes::stream::websocket_metrics_handler))
-        .route("/stream/start", post(routes::stream::start_stream))
-        .route("/stream/stop", post(routes::stream::stop_stream))
-        .route("/stream/status", get(routes::stream::get_stream_status))
-        
+        .route("/{sensor}/stream/raw", get(routes::stream::websocket_raw_handler))
+        .route("/{sensor}/stream/metrics", get(routes::stream::websocket_metrics_handler))
+        .route("/{sensor}/stream/start", post(routes::stream::start_stream))
+        .route("/{sensor}/stream/stop", post(routes::stream::stop_stream))
+        .route("/{sensor}/stream/status", get(routes::stream::get_stream_status))
+
         // Settings routes
         .route("/settings", get(routes::settings::settings_page_handler))
         .route("/settings/apply", post(routes::settings::apply_settings_handler))
@@ -517,10 +621,13 @@ async fn main() -> Result<()> {
         
         // View pages (charts + data)
         .route("/view/raw", get(routes::view::raw_stream_page))
+        .route("/{sensor}/view/raw", get(routes::view::raw_stream_page_sensor))
         .route("/view/metrics", get(routes::view::metrics_stream_page))
+        .route("/{sensor}/view/metrics", get(routes::view::metrics_stream_page_sensor))
         .route("/view/latest-raw", get(routes::view::latest_raw_page))
         .route("/view/all-metrics", get(routes::view::all_metrics_page))
-        .route("/view/health", get(routes::view::health_page))
+        .route("/{sensor}/view/all-metrics", get(routes::view::all_metrics_page_sensor))
+        .route("/view/health", get(|| async { Redirect::permanent("/health") }))
         .route("/view/diagnostics", get(routes::view::diagnostics_page))
 
         // Recording
@@ -574,7 +681,7 @@ async fn record_start_handler(State(state): State<AppState>) -> impl IntoRespons
     rec.error = None;
     drop(rec);
 
-    let modbus = state.modbus_client.clone();
+    let modbus = state.modbus_client1.clone();
     let recording = state.recording.clone();
     tokio::spawn(async move { run_recording(modbus, recording).await });
 
@@ -693,7 +800,6 @@ fn url_for(name: &str, _args: Vec<minijinja::Value>) -> Result<minijinja::Value,
         "settings" => Ok(minijinja::Value::from("/settings")),
         "apply_settings" => Ok(minijinja::Value::from("/settings/apply")),
         "test_connection" => Ok(minijinja::Value::from("/settings/test")),
-        "get_status" => Ok(minijinja::Value::from("/settings/status")),
         "reset_settings" => Ok(minijinja::Value::from("/settings/reset")),
         "get_ports" => Ok(minijinja::Value::from("/settings/ports")),
         "validate_settings" => Ok(minijinja::Value::from("/settings/validate")),
@@ -702,7 +808,6 @@ fn url_for(name: &str, _args: Vec<minijinja::Value>) -> Result<minijinja::Value,
         "view_metrics"    => Ok(minijinja::Value::from("/view/metrics")),
         "view_latest_raw"   => Ok(minijinja::Value::from("/view/latest-raw")),
         "view_all_metrics"  => Ok(minijinja::Value::from("/view/all-metrics")),
-        "view_health"       => Ok(minijinja::Value::from("/view/health")),
         "view_diagnostics"  => Ok(minijinja::Value::from("/view/diagnostics")),
         "view_csv"          => Ok(minijinja::Value::from("/view/csv")),
         _ => Err(minijinja::Error::new(

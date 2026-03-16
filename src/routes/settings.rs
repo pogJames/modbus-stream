@@ -3,6 +3,7 @@ use axum::{
     http::StatusCode,
     response::{Html, IntoResponse},
 };
+use std::sync::Arc;
 use serde_json::json;
 use chrono::Utc;
 use minijinja::context;
@@ -12,7 +13,7 @@ use tracing::{error, info, warn};
 use crate::{
     config::AppConfig,
     modbus::ModbusClient,
-    types::{Feedback, SettingsForm, SettingsStatus, ValidationErrors},
+    types::{Feedback, SensorStatus, SettingsForm, SettingsStatus, ValidationErrors},
     AppState,
 };
 
@@ -139,13 +140,24 @@ pub async fn test_connection_handler(
     }
 }
 
-/// GET /settings/status - Get current status (for HTMX polling)
+/// GET /settings/status - Get current status for both sensors (for HTMX polling)
 pub async fn get_status_handler(State(state): State<AppState>) -> impl IntoResponse {
-    let status = get_current_status(&state).await;
-    
-    state.render_template_fragment("settings/status-header.html", context! {
-        status => status
-    })
+    let now = Utc::now();
+    let (status1, status2) = tokio::join!(
+        check_sensor(&state.modbus_client1, "Sensor 1"),
+        check_sensor(&state.modbus_client2, "Sensor 2"),
+    );
+
+    let html1 = state.render_template_fragment("settings/status-header.html", context! {
+        sensor => status1,
+    });
+    let html2 = state.render_template_fragment("settings/status-header.html", context! {
+        sensor => status2,
+    });
+    Html(format!(
+        r#"<div class="sensor-status-grid">{}{}</div><div class="sensor-status-footer">Last updated: {}</div>"#,
+        html1.0, html2.0, now.format("%H:%M:%S UTC")
+    ))
 }
 
 /// POST /settings/reset - Reset settings to defaults
@@ -288,62 +300,58 @@ pub async fn validate_field_handler(
 // Helper functions
 
 async fn load_current_settings(state: &AppState) -> anyhow::Result<(SettingsForm, SettingsStatus)> {
-    // Load from config
     let settings = SettingsForm::from(&*state.config);
-    
-    // Check if client is available and try to get current sensor info and status
-    let client_guard = state.modbus_client.read().await;
-    let (sensor_info, connection_status, status_class) = match &*client_guard {
-        Some(client) => {
-            match client.test_connection().await {
-                Ok(()) => {
-                    // Try to read sensor info
-                    let sensor_info = match client.read_ucid().await {
-                        Ok(ucid) => Some(ucid),
-                        Err(e) => {
-                            warn!("Could not read sensor info: {}", e);
-                            None
-                        }
-                    };
-                    (sensor_info, "Connected".to_string(), "connected".to_string())
-                }
-                Err(e) => {
-                    warn!("Connection test error: {}", e);
-                    (None, "Error".to_string(), "error".to_string())
-                }
-            }
-        }
-        None => {
-            (None, "Not Connected".to_string(), "disconnected".to_string())
-        }
-    };
-    
+    // Status is now handled by the per-sensor HTMX polling endpoints,
+    // so return a placeholder to avoid blocking the page on Modbus I/O.
     let status = SettingsStatus {
-        connection_status,
-        status_class,
-        sensor_info,
-        last_updated: Some(Utc::now()),
+        connection_status: "Loading…".to_string(),
+        status_class: "loading".to_string(),
+        sensor_info: None,
+        last_updated: None,
         unsaved_changes: false,
     };
     
     Ok((settings, status))
 }
 
-async fn get_current_status(state: &AppState) -> SettingsStatus {
-    match load_current_settings(state).await {
-        Ok((_, status)) => status,
-        Err(e) => {
-            error!("Failed to get current status: {}", e);
-            SettingsStatus {
+async fn check_sensor(
+    client_arc: &Arc<tokio::sync::RwLock<Option<ModbusClient>>>,
+    label: &str,
+) -> SensorStatus {
+    let guard = client_arc.read().await;
+    match &*guard {
+        Some(client) => match client.test_connection().await {
+            Ok(()) => {
+                let (sensor_info, firmware_version) = tokio::join!(
+                    client.read_ucid(),
+                    client.read_firmware_version(),
+                );
+                SensorStatus {
+                    label: label.to_string(),
+                    connection_status: "Connected".to_string(),
+                    status_class: "connected".to_string(),
+                    sensor_info: sensor_info.ok(),
+                    firmware_version: firmware_version.ok(),
+                }
+            }
+            Err(_) => SensorStatus {
+                label: label.to_string(),
                 connection_status: "Error".to_string(),
                 status_class: "error".to_string(),
                 sensor_info: None,
-                last_updated: Some(Utc::now()),
-                unsaved_changes: false,
-            }
-        }
+                firmware_version: None,
+            },
+        },
+        None => SensorStatus {
+            label: label.to_string(),
+            connection_status: "Not Connected".to_string(),
+            status_class: "disconnected".to_string(),
+            sensor_info: None,
+            firmware_version: None,
+        },
     }
 }
+
 
 fn parse_form_data(form_data: HashMap<String, String>) -> Result<SettingsForm, ValidationErrors> {
     let mut errors = ValidationErrors::new();
@@ -463,7 +471,7 @@ async fn apply_settings_to_system(state: &AppState, settings: &SettingsForm) -> 
     let mut details = Vec::new();
 
     // Check if client is available
-    let client_guard = state.modbus_client.read().await;
+    let client_guard = state.modbus_client1.read().await;
     match &*client_guard {
         Some(client) => {
             // Apply sensor settings via Modbus
@@ -483,7 +491,7 @@ async fn apply_settings_to_system(state: &AppState, settings: &SettingsForm) -> 
             details.push(format!("High pass filter: {}", if settings.high_pass_filter { "enabled" } else { "disabled" }));
 
             // Handle baud rate change (requires special handling)
-            if settings.baud_rate != state.config.modbus.baud_rate {
+            if settings.baud_rate != state.config.modbus1.baud_rate {
                 if let Err(e) = client.set_baud_rate(settings.baud_rate).await {
                     return Err(anyhow::anyhow!("Failed to set baud rate: {}", e));
                 }
@@ -501,13 +509,14 @@ async fn apply_settings_to_system(state: &AppState, settings: &SettingsForm) -> 
     // Update configuration file with new settings
     let new_config = AppConfig {
         server: state.config.server.clone(),
-        modbus: crate::config::ModbusConfig {
+        modbus1: crate::config::ModbusConfig {
             device: settings.device_path.clone(),
             baud_rate: settings.baud_rate,
             slave_id: settings.slave_id,
             timeout_ms: settings.timeout_ms,
             retry_attempts: settings.retry_attempts,
         },
+        modbus2: state.config.modbus2.clone(),
         streaming: crate::config::StreamingConfig {
             max_connections: settings.max_connections,
             buffer_size: settings.buffer_size,
@@ -531,9 +540,9 @@ async fn apply_settings_to_system(state: &AppState, settings: &SettingsForm) -> 
 
 async fn test_connection_with_settings(state: &AppState, settings: &SettingsForm) -> anyhow::Result<String> {
     // Check if settings differ from current configuration
-    let settings_differ = settings.device_path != state.config.modbus.device
-        || settings.baud_rate != state.config.modbus.baud_rate
-        || settings.slave_id != state.config.modbus.slave_id;
+    let settings_differ = settings.device_path != state.config.modbus1.device
+        || settings.baud_rate != state.config.modbus1.baud_rate
+        || settings.slave_id != state.config.modbus1.slave_id;
 
     if settings_differ {
         // Create a temporary connection with the new settings
@@ -555,7 +564,7 @@ async fn test_connection_with_settings(state: &AppState, settings: &SettingsForm
         }
     } else {
         // Test the existing connection
-        let client_guard = state.modbus_client.read().await;
+        let client_guard = state.modbus_client1.read().await;
         match &*client_guard {
             Some(client) => {
                 match client.test_connection().await {
@@ -578,7 +587,7 @@ async fn reset_to_default_settings(state: &AppState) -> anyhow::Result<()> {
     info!("Configuration file reset to defaults");
 
     // Reset sensor settings via Modbus if connected
-    let client_guard = state.modbus_client.read().await;
+    let client_guard = state.modbus_client1.read().await;
     if let Some(client) = &*client_guard {
         // Reset to default sensor settings
         if let Err(e) = client.set_sample_rate(7812).await {

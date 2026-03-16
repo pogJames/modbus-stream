@@ -95,6 +95,11 @@
     <span class="ws-status" id="ws-status">Connecting…</span>
   </div>
 
+  <div class="tabs-list" style="margin-bottom:1.5rem;">
+    <a href="/1/view/raw" class="tabs-trigger{% if sensor == 1 %} active{% endif %}">Sensor 1</a>
+    <a href="/2/view/raw" class="tabs-trigger{% if sensor == 2 %} active{% endif %}">Sensor 2</a>
+  </div>
+
   <!-- Range display -->
   <div class="range-grid">
     <div class="range-card x">
@@ -240,7 +245,7 @@ setInterval(() => {
 }, 33);
 
 // ── WebSocket ─────────────────────────────────────────────────
-const ws       = new WebSocket(`ws://${location.host}/stream/raw`);
+const ws       = new WebSocket(`ws://${location.host}/{{ sensor }}/stream/raw`);
 const statusEl = document.getElementById('ws-status');
 const countEl  = document.getElementById('sample-count');
 

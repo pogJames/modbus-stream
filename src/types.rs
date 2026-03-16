@@ -260,6 +260,16 @@ pub struct SettingsForm {
     pub websocket_ping_interval_sec: u64,
 }
 
+/// Per-sensor connection status for UI display
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SensorStatus {
+    pub label: String,
+    pub connection_status: String,
+    pub status_class: String,
+    pub sensor_info: Option<UcidInfo>,
+    pub firmware_version: Option<String>,
+}
+
 /// Settings status for UI display
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SettingsStatus {
@@ -315,11 +325,11 @@ impl ValidationErrors {
 impl From<&crate::config::AppConfig> for SettingsForm {
     fn from(config: &crate::config::AppConfig) -> Self {
         Self {
-            device_path: config.modbus.device.clone(),
-            baud_rate: config.modbus.baud_rate,
-            slave_id: config.modbus.slave_id,
-            timeout_ms: config.modbus.timeout_ms,
-            retry_attempts: config.modbus.retry_attempts,
+            device_path: config.modbus1.device.clone(),
+            baud_rate: config.modbus1.baud_rate,
+            slave_id: config.modbus1.slave_id,
+            timeout_ms: config.modbus1.timeout_ms,
+            retry_attempts: config.modbus1.retry_attempts,
             sample_rate: 7812, // Default, will be read from sensor
             stream_size: 123,   // Default max
             high_pass_filter: false, // Default

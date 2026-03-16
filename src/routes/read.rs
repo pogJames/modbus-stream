@@ -1,11 +1,43 @@
 use axum::{
-    extract::State,
+    extract::{Path, State},
     http::StatusCode,
     response::{IntoResponse, Json},
 };
 use tracing::error;
 
 use crate::{types::ErrorResponse, AppState};
+
+/// Get latest raw data for both sensors combined
+pub async fn get_latest_raw_combined(State(state): State<AppState>) -> impl IntoResponse {
+    let (r1, r2) = tokio::join!(
+        async {
+            let g = state.modbus_client1.read().await;
+            match &*g { Some(c) => c.read_latest_raw().await.ok(), None => None }
+        },
+        async {
+            let g = state.modbus_client2.read().await;
+            match &*g { Some(c) => c.read_latest_raw().await.ok(), None => None }
+        },
+    );
+    Json(serde_json::json!({ "sensor1": r1, "sensor2": r2 }))
+}
+
+macro_rules! resolve_client {
+    ($sensor:expr, $state:expr) => {
+        match $sensor {
+            1 => &$state.modbus_client1,
+            2 => &$state.modbus_client2,
+            _ => return (
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: format!("Unknown sensor: {}", $sensor),
+                    code: Some("UNKNOWN_SENSOR".to_string()),
+                    timestamp: chrono::Utc::now(),
+                }),
+            ).into_response(),
+        }
+    };
+}
 
 /// Helper to handle when device is not connected
 async fn handle_no_device() -> impl IntoResponse {
@@ -20,8 +52,11 @@ async fn handle_no_device() -> impl IntoResponse {
 }
 
 /// Get temperature
-pub async fn get_temperature(State(state): State<AppState>) -> impl IntoResponse {
-    let client_guard = state.modbus_client.read().await;
+pub async fn get_temperature(
+    Path(sensor): Path<u8>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    let client_guard = resolve_client!(sensor, state).read().await;
     match &*client_guard {
         Some(client) => {
             match client.read_temperature().await {
@@ -50,8 +85,11 @@ pub async fn get_temperature(State(state): State<AppState>) -> impl IntoResponse
 }
 
 /// Get UCID information
-pub async fn get_ucid(State(state): State<AppState>) -> impl IntoResponse {
-    let client_guard = state.modbus_client.read().await;
+pub async fn get_ucid(
+    Path(sensor): Path<u8>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    let client_guard = resolve_client!(sensor, state).read().await;
     match &*client_guard {
         Some(client) => {
             match client.read_ucid().await {
@@ -75,8 +113,11 @@ pub async fn get_ucid(State(state): State<AppState>) -> impl IntoResponse {
 }
 
 /// Get firmware version
-pub async fn get_firmware_version(State(state): State<AppState>) -> impl IntoResponse {
-    let client_guard = state.modbus_client.read().await;
+pub async fn get_firmware_version(
+    Path(sensor): Path<u8>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    let client_guard = resolve_client!(sensor, state).read().await;
     match &*client_guard {
         Some(client) => {
             match client.read_firmware_version().await {
@@ -104,8 +145,11 @@ pub async fn get_firmware_version(State(state): State<AppState>) -> impl IntoRes
 }
 
 /// Get chip ID
-pub async fn get_chip_id(State(state): State<AppState>) -> impl IntoResponse {
-    let client_guard = state.modbus_client.read().await;
+pub async fn get_chip_id(
+    Path(sensor): Path<u8>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    let client_guard = resolve_client!(sensor, state).read().await;
     match &*client_guard {
         Some(client) => {
             match client.read_chip_id().await {
@@ -133,8 +177,11 @@ pub async fn get_chip_id(State(state): State<AppState>) -> impl IntoResponse {
 }
 
 /// Get FIFO buffer size
-pub async fn get_fifo_buffer_size(State(state): State<AppState>) -> impl IntoResponse {
-    let client_guard = state.modbus_client.read().await;
+pub async fn get_fifo_buffer_size(
+    Path(sensor): Path<u8>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    let client_guard = resolve_client!(sensor, state).read().await;
     match &*client_guard {
         Some(client) => {
             match client.read_fifo_buffer_size().await {
@@ -162,8 +209,11 @@ pub async fn get_fifo_buffer_size(State(state): State<AppState>) -> impl IntoRes
 }
 
 /// Get latest raw data
-pub async fn get_latest_raw(State(state): State<AppState>) -> impl IntoResponse {
-    let client_guard = state.modbus_client.read().await;
+pub async fn get_latest_raw(
+    Path(sensor): Path<u8>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    let client_guard = resolve_client!(sensor, state).read().await;
     match &*client_guard {
         Some(client) => {
             match client.read_latest_raw().await {
@@ -187,8 +237,11 @@ pub async fn get_latest_raw(State(state): State<AppState>) -> impl IntoResponse 
 }
 
 /// Get gravity RMS
-pub async fn get_gravity_rms(State(state): State<AppState>) -> impl IntoResponse {
-    let client_guard = state.modbus_client.read().await;
+pub async fn get_gravity_rms(
+    Path(sensor): Path<u8>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    let client_guard = resolve_client!(sensor, state).read().await;
     match &*client_guard {
         Some(client) => {
             match client.read_gravity_rms().await {
@@ -217,8 +270,11 @@ pub async fn get_gravity_rms(State(state): State<AppState>) -> impl IntoResponse
 }
 
 /// Get gravity peak
-pub async fn get_gravity_peak(State(state): State<AppState>) -> impl IntoResponse {
-    let client_guard = state.modbus_client.read().await;
+pub async fn get_gravity_peak(
+    Path(sensor): Path<u8>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    let client_guard = resolve_client!(sensor, state).read().await;
     match &*client_guard {
         Some(client) => {
             match client.read_gravity_peak().await {
@@ -247,8 +303,11 @@ pub async fn get_gravity_peak(State(state): State<AppState>) -> impl IntoRespons
 }
 
 /// Get gravity crest factor
-pub async fn get_gravity_crest_factor(State(state): State<AppState>) -> impl IntoResponse {
-    let client_guard = state.modbus_client.read().await;
+pub async fn get_gravity_crest_factor(
+    Path(sensor): Path<u8>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    let client_guard = resolve_client!(sensor, state).read().await;
     match &*client_guard {
         Some(client) => {
             match client.read_gravity_crest_factor().await {
@@ -277,8 +336,11 @@ pub async fn get_gravity_crest_factor(State(state): State<AppState>) -> impl Int
 }
 
 /// Get gravity skewness
-pub async fn get_gravity_skewness(State(state): State<AppState>) -> impl IntoResponse {
-    let client_guard = state.modbus_client.read().await;
+pub async fn get_gravity_skewness(
+    Path(sensor): Path<u8>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    let client_guard = resolve_client!(sensor, state).read().await;
     match &*client_guard {
         Some(client) => {
             match client.read_gravity_skewness().await {
@@ -307,8 +369,11 @@ pub async fn get_gravity_skewness(State(state): State<AppState>) -> impl IntoRes
 }
 
 /// Get gravity kurtosis
-pub async fn get_gravity_kurtosis(State(state): State<AppState>) -> impl IntoResponse {
-    let client_guard = state.modbus_client.read().await;
+pub async fn get_gravity_kurtosis(
+    Path(sensor): Path<u8>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    let client_guard = resolve_client!(sensor, state).read().await;
     match &*client_guard {
         Some(client) => {
             match client.read_gravity_kurtosis().await {
@@ -337,8 +402,11 @@ pub async fn get_gravity_kurtosis(State(state): State<AppState>) -> impl IntoRes
 }
 
 /// Get gravity primary frequency
-pub async fn get_gravity_primary_frequency(State(state): State<AppState>) -> impl IntoResponse {
-    let client_guard = state.modbus_client.read().await;
+pub async fn get_gravity_primary_frequency(
+    Path(sensor): Path<u8>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    let client_guard = resolve_client!(sensor, state).read().await;
     match &*client_guard {
         Some(client) => {
             match client.read_gravity_primary_frequency().await {
@@ -367,8 +435,11 @@ pub async fn get_gravity_primary_frequency(State(state): State<AppState>) -> imp
 }
 
 /// Get velocity RMS
-pub async fn get_velocity_rms(State(state): State<AppState>) -> impl IntoResponse {
-    let client_guard = state.modbus_client.read().await;
+pub async fn get_velocity_rms(
+    Path(sensor): Path<u8>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    let client_guard = resolve_client!(sensor, state).read().await;
     match &*client_guard {
         Some(client) => {
             match client.read_velocity_rms().await {
@@ -397,8 +468,11 @@ pub async fn get_velocity_rms(State(state): State<AppState>) -> impl IntoRespons
 }
 
 /// Get velocity peak
-pub async fn get_velocity_peak(State(state): State<AppState>) -> impl IntoResponse {
-    let client_guard = state.modbus_client.read().await;
+pub async fn get_velocity_peak(
+    Path(sensor): Path<u8>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    let client_guard = resolve_client!(sensor, state).read().await;
     match &*client_guard {
         Some(client) => {
             match client.read_velocity_peak().await {
@@ -427,8 +501,11 @@ pub async fn get_velocity_peak(State(state): State<AppState>) -> impl IntoRespon
 }
 
 /// Get velocity crest factor
-pub async fn get_velocity_crest_factor(State(state): State<AppState>) -> impl IntoResponse {
-    let client_guard = state.modbus_client.read().await;
+pub async fn get_velocity_crest_factor(
+    Path(sensor): Path<u8>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    let client_guard = resolve_client!(sensor, state).read().await;
     match &*client_guard {
         Some(client) => {
             match client.read_velocity_crest_factor().await {
@@ -457,8 +534,11 @@ pub async fn get_velocity_crest_factor(State(state): State<AppState>) -> impl In
 }
 
 /// Get velocity primary frequency
-pub async fn get_velocity_primary_frequency(State(state): State<AppState>) -> impl IntoResponse {
-    let client_guard = state.modbus_client.read().await;
+pub async fn get_velocity_primary_frequency(
+    Path(sensor): Path<u8>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    let client_guard = resolve_client!(sensor, state).read().await;
     match &*client_guard {
         Some(client) => {
             match client.read_velocity_primary_frequency().await {
@@ -487,8 +567,11 @@ pub async fn get_velocity_primary_frequency(State(state): State<AppState>) -> im
 }
 
 /// Get all metrics (gravity + velocity)
-pub async fn get_all_metrics(State(state): State<AppState>) -> impl IntoResponse {
-    let client_guard = state.modbus_client.read().await;
+pub async fn get_all_metrics(
+    Path(sensor): Path<u8>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    let client_guard = resolve_client!(sensor, state).read().await;
     match &*client_guard {
         Some(client) => {
             match client.read_all_metrics().await {

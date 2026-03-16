@@ -4,9 +4,7 @@
 <div class="settings-container">
     <header class="settings-header">
         <h2>⚙️ Sensor Configuration</h2>
-        <div id="status-header" hx-get="{{ url_for('get_status') }}" hx-trigger="load, every 5s">
-            {% include "settings/status-header.html" %}
-        </div>
+        <div id="sensor-status" hx-get="/settings/status" hx-trigger="load, every 5s"></div>
     </header>
     
     <main class="settings-main">
