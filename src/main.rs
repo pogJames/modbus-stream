@@ -16,7 +16,7 @@ use tokio::sync::broadcast;
 use std::time::Duration;
 use tokio::time::{Instant, timeout};
 use tower_http::{cors::CorsLayer, services::ServeDir};
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 mod config;
 mod modbus;
@@ -51,18 +51,33 @@ struct Args {
     slave_id: u8,
 }
 
+/// Per-sensor recording progress.
+#[derive(Clone, Serialize, Default)]
+struct SensorRecordingState {
+    /// Task is still collecting samples.
+    active: bool,
+    /// Samples collected so far.
+    samples: u64,
+    /// Output filename (set once the file is created).
+    filename: Option<String>,
+    /// Set on fatal error (disconnected mid-recording, file I/O failure, etc.).
+    error: Option<String>,
+}
+
+/// Aggregate recording state exposed through the status API.
 #[derive(Clone, Serialize)]
 struct RecordingState {
+    /// True while at least one sensor task is still running.
     active: bool,
-    samples: u64,
+    /// Target sample count per sensor (10 s × 7812 Hz).
     total: u64,
-    filename: Option<String>,
-    error: Option<String>,
+    /// One entry per configured sensor slot (connected or not).
+    sensors: Vec<SensorRecordingState>,
 }
 
 impl Default for RecordingState {
     fn default() -> Self {
-        Self { active: false, samples: 0, total: 78120, filename: None, error: None }
+        Self { active: false, total: RECORD_TARGET, sensors: Vec::new() }
     }
 }
 
@@ -542,24 +557,60 @@ async fn main() -> Result<()> {
 const RECORD_TARGET: u64 = 78120; // 10 seconds at 7812 Hz
 
 async fn record_start_handler(State(state): State<AppState>) -> impl IntoResponse {
+    // 1. Probe which sensors are connected (read lock, no write)
+    let mut connected: Vec<usize> = Vec::new();
+    for (i, arc) in state.modbus_clients.iter().enumerate() {
+        if arc.read().await.is_some() {
+            connected.push(i);
+        }
+    }
+    info!(
+        "Record start: {}/{} sensors connected — {:?}",
+        connected.len(),
+        state.modbus_clients.len(),
+        connected.iter().map(|i| i + 1).collect::<Vec<_>>()
+    );
+
+    if connected.is_empty() {
+        return Json(serde_json::json!({ "success": false, "error": "No sensors connected" }));
+    }
+
+    // 2. Lock and initialise recording state
+    let sensor_count = state.modbus_clients.len();
     let mut rec = state.recording.lock().await;
     if rec.active {
         return Json(serde_json::json!({ "success": false, "error": "Already recording" }));
     }
     rec.active = true;
-    rec.samples = 0;
-    rec.filename = None;
-    rec.error = None;
+    rec.sensors = (0..sensor_count)
+        .map(|i| SensorRecordingState {
+            active: connected.contains(&i),
+            samples: 0,
+            filename: None,
+            error: if connected.contains(&i) {
+                None
+            } else {
+                Some("Not connected — skipped".to_string())
+            },
+        })
+        .collect();
+    let connected_count = connected.len();
     drop(rec);
 
-    let modbus = match state.modbus_clients.first() {
-        Some(c) => c.clone(),
-        None => return Json(serde_json::json!({ "success": false, "error": "No sensors configured" })),
-    };
-    let recording = state.recording.clone();
-    tokio::spawn(async move { run_recording(modbus, recording).await });
+    // 3. Shared timestamp so all files use the same prefix
+    let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
 
-    Json(serde_json::json!({ "success": true }))
+    // 4. Spawn one task per connected sensor
+    for idx in connected {
+        let modbus = state.modbus_clients[idx].clone();
+        let recording = state.recording.clone();
+        let ts = timestamp.clone();
+        tokio::spawn(async move {
+            run_recording_sensor(idx, modbus, recording, ts).await;
+        });
+    }
+
+    Json(serde_json::json!({ "success": true, "sensors_recording": connected_count }))
 }
 
 async fn record_status_handler(State(state): State<AppState>) -> impl IntoResponse {
@@ -567,38 +618,32 @@ async fn record_status_handler(State(state): State<AppState>) -> impl IntoRespon
     Json(rec.clone())
 }
 
-async fn run_recording(
+/// Mark `rec.active = false` when no sensor task is still running.
+fn update_overall_active(rec: &mut RecordingState) {
+    rec.active = rec.sensors.iter().any(|s| s.active);
+    if !rec.active {
+        info!("All sensor recording tasks complete");
+    }
+}
+
+/// One recording task per connected sensor.
+/// Phase 1 — collect all samples in memory (async, no file I/O).
+/// Phase 2 — write the collected buffer to disk in a spawn_blocking call.
+async fn run_recording_sensor(
+    idx: usize,
     modbus_client: Arc<tokio::sync::RwLock<Option<ModbusClient>>>,
     recording: Arc<tokio::sync::Mutex<RecordingState>>,
+    timestamp: String,
 ) {
-    use std::io::Write;
+    let sensor_n = idx + 1;
+    info!("[Sensor {}] Recording task started, target {} samples", sensor_n, RECORD_TARGET);
 
-    let filename = format!("record_{}.csv", chrono::Local::now().format("%Y%m%d_%H%M%S"));
-    let path = format!("{}/{}", CSV_DATA_DIR, filename);
-
-    let file = match std::fs::File::create(&path) {
-        Ok(f) => f,
-        Err(e) => {
-            let mut rec = recording.lock().await;
-            rec.active = false;
-            rec.error = Some(format!("Failed to create file: {}", e));
-            return;
-        }
-    };
-
-    {
-        let mut rec = recording.lock().await;
-        rec.filename = Some(filename.clone());
-    }
-
-    let mut writer = std::io::BufWriter::new(file);
-    let _ = writeln!(writer, "x,y,z");
-
+    // ── Phase 1: collect ──────────────────────────────────────────────────────
+    let mut buf: Vec<types::AccelerationData> = Vec::with_capacity(RECORD_TARGET as usize);
     let mut next_count: u16 = 0;
-    let mut total: u64 = 0;
 
     loop {
-        if total >= RECORD_TARGET {
+        if buf.len() >= RECORD_TARGET as usize {
             break;
         }
 
@@ -607,8 +652,12 @@ async fn run_recording(
             Some(c) => c,
             None => {
                 drop(guard);
-                tokio::time::sleep(Duration::from_millis(100)).await;
-                continue;
+                error!("[Sensor {}] Disconnected mid-recording after {} samples", sensor_n, buf.len());
+                let mut rec = recording.lock().await;
+                rec.sensors[idx].active = false;
+                rec.sensors[idx].error = Some("Sensor disconnected during recording".to_string());
+                update_overall_active(&mut rec);
+                return;
             }
         };
 
@@ -628,25 +677,82 @@ async fn run_recording(
                     tokio::time::sleep(Duration::from_millis(1)).await;
                     continue;
                 }
-                for sample in &data {
-                    if total >= RECORD_TARGET { break; }
-                    let _ = writeln!(writer, "{},{},{}", sample.x, sample.y, sample.z);
-                    total += 1;
+                for sample in data {
+                    if buf.len() >= RECORD_TARGET as usize {
+                        break;
+                    }
+                    buf.push(sample);
                 }
-                recording.lock().await.samples = total;
+
+                let n = buf.len() as u64;
+                // Low-contention progress update every 100 samples
+                if n % 100 == 0 {
+                    recording.lock().await.sensors[idx].samples = n;
+                }
+                if n % 1000 == 0 {
+                    debug!(
+                        "[Sensor {}] collected {}/{} ({:.0}%)",
+                        sensor_n,
+                        n,
+                        RECORD_TARGET,
+                        n as f64 / RECORD_TARGET as f64 * 100.0
+                    );
+                }
             }
             Err(e) => {
-                error!("Recording read failed: {}", e);
+                error!("[Sensor {}] read failed: {}", sensor_n, e);
                 next_count = 0;
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
         }
     }
 
-    let _ = writer.flush();
+    let collected = buf.len() as u64;
+    info!("[Sensor {}] Collection complete: {} samples", sensor_n, collected);
+
+    // Final sample count before we move buf into the blocking closure
+    {
+        let mut rec = recording.lock().await;
+        rec.sensors[idx].samples = collected;
+    }
+
+    // ── Phase 2: bulk write via spawn_blocking ────────────────────────────────
+    let filename = format!("record_{}_sensor{}.csv", timestamp, sensor_n);
+    let path = format!("{}/{}", CSV_DATA_DIR, filename);
+
+    let write_result = tokio::task::spawn_blocking(move || -> std::io::Result<u64> {
+        use std::io::Write;
+        let file = std::fs::File::create(&path)?;
+        let mut writer = std::io::BufWriter::with_capacity(1 << 20, file); // 1 MB buffer
+        writeln!(writer, "x,y,z")?;
+        for sample in &buf {
+            writeln!(writer, "{},{},{}", sample.x, sample.y, sample.z)?;
+        }
+        writer.flush()?;
+        // Return bytes written as approximate size (header + rows)
+        Ok(buf.len() as u64 * 30) // rough estimate; not critical
+    })
+    .await;
+
     let mut rec = recording.lock().await;
-    rec.active = false;
-    rec.samples = total;
+    match write_result {
+        Ok(Ok(_bytes)) => {
+            info!("[Sensor {}] Wrote {}", sensor_n, filename);
+            rec.sensors[idx].filename = Some(filename);
+            rec.sensors[idx].active = false;
+        }
+        Ok(Err(e)) => {
+            error!("[Sensor {}] File write failed: {}", sensor_n, e);
+            rec.sensors[idx].active = false;
+            rec.sensors[idx].error = Some(format!("File write failed: {}", e));
+        }
+        Err(e) => {
+            error!("[Sensor {}] spawn_blocking panicked: {}", sensor_n, e);
+            rec.sensors[idx].active = false;
+            rec.sensors[idx].error = Some(format!("Internal error: {}", e));
+        }
+    }
+    update_overall_active(&mut rec);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

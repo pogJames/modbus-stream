@@ -15,16 +15,8 @@
                 <h3>Record Data</h3>
             </div>
             <div class="card-content">
-                <p>Capture 10 seconds of raw sensor data and save to a CSV file.</p>
-                <div id="rec-progress" style="display:none; margin:0.75rem 0 0.5rem;">
-                    <div style="display:flex; justify-content:space-between; font-size:0.75rem; color:var(--text-secondary); margin-bottom:0.3rem;">
-                        <span id="rec-label">0 / 78 120 samples</span>
-                        <span id="rec-pct">0%</span>
-                    </div>
-                    <div style="height:6px; background:var(--border-color); border-radius:3px; overflow:hidden;">
-                        <div id="rec-bar" style="height:100%; width:0%; background:var(--blue); border-radius:3px; transition:width 0.3s;"></div>
-                    </div>
-                </div>
+                <p>Capture 10 seconds of raw sensor data across all connected sensors.</p>
+                <div id="rec-sensors" style="display:none; margin:0.75rem 0 0.5rem;"></div>
                 <div id="rec-result" style="font-size:0.8rem; margin:0.5rem 0; color:var(--text-secondary);"></div>
                 <div class="card-actions">
                     <button id="rec-btn" class="btn btn-info" onclick="startRecording()">Start Record</button>
@@ -95,34 +87,59 @@ function startRecording() {
       }
       document.getElementById('rec-btn').disabled = true;
       document.getElementById('rec-btn').textContent = 'Recording…';
-      document.getElementById('rec-progress').style.display = '';
+      document.getElementById('rec-sensors').style.display = '';
       document.getElementById('rec-result').textContent = '';
       recPoll = setInterval(pollRecording, 400);
     });
+}
+
+function makeSensorBar(sensor, i, total) {
+  const n = i + 1;
+  if (sensor.error && !sensor.active) {
+    return `<div style="font-size:0.75rem; color:var(--red, #e74c3c); margin-bottom:0.4rem;">
+      Sensor ${n}: ${sensor.error}
+    </div>`;
+  }
+  const pct = total > 0 ? Math.min(100, Math.round((sensor.samples / total) * 100)) : 0;
+  return `<div style="margin-bottom:0.5rem;">
+    <div style="display:flex; justify-content:space-between; font-size:0.75rem; color:var(--text-secondary); margin-bottom:0.2rem;">
+      <span>Sensor ${n}: ${sensor.samples.toLocaleString()} / ${total.toLocaleString()} samples</span>
+      <span>${pct}%</span>
+    </div>
+    <div style="height:5px; background:var(--border-color); border-radius:3px; overflow:hidden;">
+      <div style="height:100%; width:${pct}%; background:var(--blue); border-radius:3px; transition:width 0.3s;"></div>
+    </div>
+  </div>`;
 }
 
 function pollRecording() {
   fetch('/api/record/status')
     .then(r => r.json())
     .then(d => {
-      const pct = Math.round((d.samples / d.total) * 100);
-      document.getElementById('rec-label').textContent =
-        `${d.samples.toLocaleString()} / ${d.total.toLocaleString()} samples`;
-      document.getElementById('rec-pct').textContent = `${pct}%`;
-      document.getElementById('rec-bar').style.width = `${pct}%`;
+      const sensorsEl = document.getElementById('rec-sensors');
+      if (d.sensors && d.sensors.length) {
+        sensorsEl.innerHTML = d.sensors.map((s, i) => makeSensorBar(s, i, d.total)).join('');
+      }
 
       if (!d.active) {
         clearInterval(recPoll); recPoll = null;
         document.getElementById('rec-btn').disabled = false;
-        document.getElementById('rec-btn').textContent = 'Start Recording';
-        document.getElementById('rec-progress').style.display = 'none';
-        if (d.filename) {
-          document.getElementById('rec-result').innerHTML =
-            `Saved: <a href="/view/csv/${d.filename}">${d.filename}</a>`;
-        }
-        if (d.error) {
-          document.getElementById('rec-result').textContent = `Error: ${d.error}`;
-        }
+        document.getElementById('rec-btn').textContent = 'Start Record';
+        sensorsEl.style.display = 'none';
+
+        const links = (d.sensors || [])
+          .filter(s => s.filename)
+          .map(s => `<a href="/view/csv/${s.filename}">${s.filename}</a>`)
+          .join(', ');
+        const errors = (d.sensors || [])
+          .filter(s => s.error && !s.filename)
+          .map(s => s.error)
+          .join('; ');
+
+        let msg = '';
+        if (links) msg += `Saved: ${links}`;
+        if (errors) msg += (msg ? ' | Errors: ' : 'Errors: ') + errors;
+        document.getElementById('rec-result').innerHTML = msg;
       }
     });
 }
