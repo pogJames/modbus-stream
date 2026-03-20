@@ -57,7 +57,7 @@ impl StreamManager {
                 // Buffer nearly empty — just refresh the size, skip data this cycle
                 client.read_fifo_buffer_size().await.map(|sz| (sz, vec![]))
             } else {
-                let count = next_count.min(123);
+                let count = crate::fifo_read_count(next_count);
                 client.read_fifo_combined(count).await
             };
 

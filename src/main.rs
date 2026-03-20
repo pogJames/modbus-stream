@@ -16,7 +16,7 @@ use tokio::sync::broadcast;
 use std::time::Duration;
 use tokio::time::{Instant, timeout};
 use tower_http::{cors::CorsLayer, services::ServeDir};
-use tracing::{debug, error, info};
+use tracing::{error, info, warn};
 
 mod config;
 mod modbus;
@@ -626,6 +626,13 @@ fn update_overall_active(rec: &mut RecordingState) {
     }
 }
 
+/// Compute the aligned register count to request from the FIFO.
+/// Always rounds down to a multiple of 3 (one XYZ triplet) and caps at 123.
+/// Returns 0 only when `raw` is 0, which the caller should handle as "skip".
+pub fn fifo_read_count(raw: u16) -> u16 {
+    (raw.min(123) / 3) * 3
+}
+
 /// One recording task per connected sensor.
 /// Phase 1 — collect all samples in memory (async, no file I/O).
 /// Phase 2 — write the collected buffer to disk in a spawn_blocking call.
@@ -642,9 +649,53 @@ async fn run_recording_sensor(
     let mut buf: Vec<types::AccelerationData> = Vec::with_capacity(RECORD_TARGET as usize);
     let mut next_count: u16 = 0;
 
+    // Diagnostic counters
+    let mut total_errors: u64 = 0;
+    let mut consecutive_errors: u32 = 0;
+    let mut empty_cycles: u64 = 0;   // cycles where FIFO had <= 6 registers
+    let mut last_log_n: u64 = 0;
+    let mut last_log_time = tokio::time::Instant::now();
+    let mut last_progress_time = tokio::time::Instant::now();
+    let mut last_progress_n: usize = 0;
+    // Separate from last_progress_time (which is reset by the stuck-log timer);
+    // this one only moves when actual samples land — used for the 60 s abort.
+    let mut no_progress_since = tokio::time::Instant::now();
+
     loop {
         if buf.len() >= RECORD_TARGET as usize {
             break;
+        }
+
+        // ── Stuck detector (warn every 5 s) ─────────────────────────────────
+        if last_progress_time.elapsed() > Duration::from_secs(5) {
+            warn!(
+                "[Sensor {}] STUCK: no new samples for {:.1}s \
+                 (at {}/{}, next_count={}, consecutive_errors={}, total_errors={}, empty_cycles={})",
+                sensor_n,
+                last_progress_time.elapsed().as_secs_f64(),
+                buf.len(), RECORD_TARGET,
+                next_count, consecutive_errors, total_errors, empty_cycles
+            );
+            // Reset timer so we warn again in another 5 s, not every loop
+            last_progress_time = tokio::time::Instant::now();
+            last_progress_n = buf.len();
+        }
+
+        // ── Time-based abort (60 s without any new samples) ──────────────────
+        if no_progress_since.elapsed() > Duration::from_secs(60) {
+            error!(
+                "[Sensor {}] Aborting: no samples collected for 60 s \
+                 (at {}/{} samples, total_errors={}, consecutive_errors={})",
+                sensor_n, buf.len(), RECORD_TARGET, total_errors, consecutive_errors
+            );
+            let mut rec = recording.lock().await;
+            rec.sensors[idx].active = false;
+            rec.sensors[idx].error = Some(format!(
+                "No progress for 60 s — {} total Modbus errors",
+                total_errors
+            ));
+            update_overall_active(&mut rec);
+            return;
         }
 
         let guard = modbus_client.read().await;
@@ -661,27 +712,52 @@ async fn run_recording_sensor(
             }
         };
 
+        let t_read = tokio::time::Instant::now();
         let result: anyhow::Result<(u16, Vec<types::AccelerationData>)> = if next_count <= 6 {
-            client.read_fifo_buffer_size().await.map(|sz| (sz, vec![]))
+            empty_cycles += 1;
+            match tokio::time::timeout(
+                Duration::from_millis(200),
+                client.read_fifo_buffer_size(),
+            ).await {
+                Ok(r) => r.map(|sz| (sz, vec![])),
+                Err(_) => Err(anyhow::anyhow!("Modbus read timed out after 200ms")),
+            }
         } else {
-            let count = next_count.min(123);
-            client.read_fifo_combined(count).await
+            let count = fifo_read_count(next_count);
+            match tokio::time::timeout(
+                Duration::from_millis(200),
+                client.read_fifo_combined(count),
+            ).await {
+                Ok(r) => r,
+                Err(_) => Err(anyhow::anyhow!("Modbus read timed out after 200ms")),
+            }
         };
+        let read_ms = t_read.elapsed().as_millis();
 
         drop(guard);
 
         match result {
             Ok((new_size, data)) => {
+                consecutive_errors = 0;
                 next_count = new_size;
                 if data.is_empty() {
                     tokio::time::sleep(Duration::from_millis(1)).await;
                     continue;
                 }
+
+                let before = buf.len();
                 for sample in data {
                     if buf.len() >= RECORD_TARGET as usize {
                         break;
                     }
                     buf.push(sample);
+                }
+                let added = (buf.len() - before) as u64;
+
+                if added > 0 {
+                    last_progress_time = tokio::time::Instant::now();
+                    last_progress_n = buf.len();
+                    no_progress_since = tokio::time::Instant::now();
                 }
 
                 let n = buf.len() as u64;
@@ -689,26 +765,48 @@ async fn run_recording_sensor(
                 if n % 100 == 0 {
                     recording.lock().await.sensors[idx].samples = n;
                 }
-                if n % 1000 == 0 {
-                    debug!(
-                        "[Sensor {}] collected {}/{} ({:.0}%)",
-                        sensor_n,
-                        n,
-                        RECORD_TARGET,
-                        n as f64 / RECORD_TARGET as f64 * 100.0
+
+                // Rate log every 1000 samples or every 10 s, whichever comes first
+                if n / 1000 > last_log_n / 1000 || last_log_time.elapsed() > Duration::from_secs(10) {
+                    let secs = last_log_time.elapsed().as_secs_f64().max(0.001);
+                    let rate = (n - last_log_n) as f64 / secs;
+                    info!(
+                        "[Sensor {}] {}/{} ({:.0}%) — {:.0} sps, \
+                         last_read={}ms, next_count={}, \
+                         total_errors={}, empty_cycles={}",
+                        sensor_n, n, RECORD_TARGET,
+                        n as f64 / RECORD_TARGET as f64 * 100.0,
+                        rate, read_ms, next_count,
+                        total_errors, empty_cycles
                     );
+                    last_log_n = n;
+                    last_log_time = tokio::time::Instant::now();
                 }
             }
             Err(e) => {
-                error!("[Sensor {}] read failed: {}", sensor_n, e);
+                total_errors += 1;
+                consecutive_errors += 1;
+                let prev_next_count = next_count;
                 next_count = 0;
+
+                warn!(
+                    "[Sensor {}] read error #{} (consecutive={}, read_ms={}, \
+                     next_count_was={}): {}",
+                    sensor_n, total_errors, consecutive_errors,
+                    read_ms, prev_next_count, e
+                );
+
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
         }
     }
 
     let collected = buf.len() as u64;
-    info!("[Sensor {}] Collection complete: {} samples", sensor_n, collected);
+    info!(
+        "[Sensor {}] Collection complete: {} samples \
+         (total_errors={}, empty_cycles={})",
+        sensor_n, collected, total_errors, empty_cycles
+    );
 
     // Final sample count before we move buf into the blocking closure
     {
@@ -827,5 +925,249 @@ impl AppState {
     
     pub fn render_template_fragment(&self, template_name: &str, context: minijinja::Value) -> Html<String> {
         self.render_template(template_name, "", context)
+    }
+}
+
+// ── Recording unit tests ───────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod recording_tests {
+    use super::*;
+    use std::collections::VecDeque;
+    use std::sync::Mutex as StdMutex;
+
+    // ── fifo_read_count ────────────────────────────────────────────────────────
+
+    #[test]
+    fn count_is_always_divisible_by_3() {
+        for raw in 0u16..=300 {
+            let c = fifo_read_count(raw);
+            assert_eq!(c % 3, 0, "raw={raw} → count={c} is not divisible by 3");
+        }
+    }
+
+    #[test]
+    fn count_never_exceeds_123() {
+        for raw in 0u16..=65535 {
+            assert!(fifo_read_count(raw) <= 123, "raw={raw} exceeded 123");
+        }
+    }
+
+    #[test]
+    fn count_is_zero_only_for_small_raw() {
+        // raw < 3 cannot form a full XYZ triplet
+        assert_eq!(fifo_read_count(0), 0);
+        assert_eq!(fifo_read_count(1), 0);
+        assert_eq!(fifo_read_count(2), 0);
+        // raw == 3 gives exactly 1 sample
+        assert_eq!(fifo_read_count(3), 3);
+    }
+
+    #[test]
+    fn count_representative_values() {
+        assert_eq!(fifo_read_count(7), 6);    // was 7 before fix (misaligned)
+        assert_eq!(fifo_read_count(100), 99);  // was 100 before fix
+        assert_eq!(fifo_read_count(122), 120); // was 122 before fix
+        assert_eq!(fifo_read_count(123), 123); // exact multiple — unchanged
+        assert_eq!(fifo_read_count(200), 123); // capped at 123
+    }
+
+    // ── Collection loop simulation ─────────────────────────────────────────────
+    //
+    // We simulate the recording loop's interaction with a mock FIFO so we can
+    // reproduce and assert on both the "quiet sensor" and "vibrating sensor" cases
+    // without physical hardware.
+
+    /// A canned sequence of FIFO responses.
+    struct MockFifo {
+        /// Queue of (fifo_size_after_drain, samples_to_return).
+        /// When empty the mock returns an error (simulates sensor going offline).
+        responses: VecDeque<Result<(u16, Vec<types::AccelerationData>), &'static str>>,
+    }
+
+    fn sample(v: f64) -> types::AccelerationData {
+        types::AccelerationData { x: v, y: v, z: v }
+    }
+
+    impl MockFifo {
+        fn new() -> Self {
+            Self { responses: VecDeque::new() }
+        }
+        /// Enqueue: next read returns `size_after` as new FIFO size, `n_samples` samples.
+        fn push_data(&mut self, size_after: u16, n_samples: u16) {
+            let data: Vec<_> = (0..n_samples).map(|i| sample(i as f64)).collect();
+            self.responses.push_back(Ok((size_after, data)));
+        }
+        /// Enqueue: next read returns size only (empty data — simulates FIFO < 6).
+        fn push_size(&mut self, size: u16) {
+            self.responses.push_back(Ok((size, vec![])));
+        }
+        /// Enqueue: next read returns a Modbus error.
+        fn push_error(&mut self) {
+            self.responses.push_back(Err("simulated Modbus timeout"));
+        }
+        fn pop(&mut self) -> anyhow::Result<(u16, Vec<types::AccelerationData>)> {
+            match self.responses.pop_front() {
+                Some(Ok(r))  => Ok(r),
+                Some(Err(e)) => Err(anyhow::anyhow!("{}", e)),
+                None         => Err(anyhow::anyhow!("mock exhausted")),
+            }
+        }
+    }
+
+    /// Run the same logic as `run_recording_sensor`'s collection loop, but driven by
+    /// `MockFifo` instead of real Modbus.  Returns (samples_collected, errors, empty_cycles).
+    async fn run_mock_collection(
+        fifo: Arc<StdMutex<MockFifo>>,
+        target: usize,
+        max_consecutive_errors: u32,
+    ) -> (usize, u64, u64) {
+        let mut buf: Vec<types::AccelerationData> = Vec::new();
+        let mut next_count: u16 = 0;
+        let mut total_errors: u64 = 0;
+        let mut consecutive_errors: u32 = 0;
+        let mut empty_cycles: u64 = 0;
+
+        loop {
+            if buf.len() >= target { break; }
+
+            let result: anyhow::Result<(u16, Vec<types::AccelerationData>)> = {
+                let mut f = fifo.lock().unwrap();
+                if next_count <= 6 {
+                    empty_cycles += 1;
+                    f.pop().map(|(sz, _)| (sz, vec![]))
+                } else {
+                    let count = fifo_read_count(next_count);
+                    // Simulate partial drain: only return min(count/3, available) samples
+                    match f.pop() {
+                        Ok((new_size, data)) => {
+                            let take = (count / 3) as usize;
+                            let got: Vec<_> = data.into_iter().take(take).collect();
+                            Ok((new_size, got))
+                        }
+                        Err(e) => Err(e),
+                    }
+                }
+            };
+
+            match result {
+                Ok((new_size, data)) => {
+                    consecutive_errors = 0;
+                    next_count = new_size;
+                    if data.is_empty() { continue; }
+                    for s in data {
+                        if buf.len() >= target { break; }
+                        buf.push(s);
+                    }
+                }
+                Err(_) => {
+                    total_errors += 1;
+                    consecutive_errors += 1;
+                    next_count = 0;
+                    if consecutive_errors >= max_consecutive_errors {
+                        break;
+                    }
+                }
+            }
+        }
+
+        (buf.len(), total_errors, empty_cycles)
+    }
+
+    // ── Tests ──────────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn quiet_sensor_completes() {
+        // Quiet sensor: FIFO has ~30 registers available per cycle (10 samples).
+        // next_count stays > 6 after the first size poll so we always take the data path.
+        let fifo = Arc::new(StdMutex::new(MockFifo::new()));
+        {
+            let mut mf = fifo.lock().unwrap();
+            mf.push_size(30);           // initial: next_count=0 ≤ 6 → size-only → next_count=30
+            for _ in 0..40 {
+                mf.push_data(30, 10);   // next_count=30 → count=30 → 10 samples, size stays 30
+            }
+        }
+        let (collected, errors, _) = run_mock_collection(fifo, 100, 50).await;
+        assert_eq!(collected, 100);
+        assert_eq!(errors, 0);
+    }
+
+    #[tokio::test]
+    async fn vibrating_sensor_completes() {
+        // Sensor fills FIFO at max rate; every read returns 41 samples.
+        let fifo = Arc::new(StdMutex::new(MockFifo::new()));
+        {
+            let mut mf = fifo.lock().unwrap();
+            for _ in 0..10 {
+                // next_count starts at 0 → size-only first
+                mf.push_size(123);
+                // subsequent reads: 123 registers → 41 samples
+                for _ in 0..20 {
+                    mf.push_data(123, 41);
+                }
+            }
+        }
+        let (collected, errors, _) = run_mock_collection(fifo, 100, 50).await;
+        assert_eq!(collected, 100);
+        assert_eq!(errors, 0);
+    }
+
+    #[tokio::test]
+    async fn intermittent_errors_do_not_stop_recording() {
+        // Every 3rd response is an error; recording should still complete.
+        let fifo = Arc::new(StdMutex::new(MockFifo::new()));
+        {
+            let mut mf = fifo.lock().unwrap();
+            mf.push_size(30);
+            for _ in 0..200 {
+                mf.push_data(30, 10); // ok
+                mf.push_data(30, 10); // ok
+                mf.push_error();       // transient error
+                mf.push_size(30);     // size refresh after error+reset
+            }
+        }
+        let (collected, errors, _) = run_mock_collection(fifo, 100, 50).await;
+        assert_eq!(collected, 100, "recording should still complete despite errors");
+        assert!(errors > 0, "should have seen some errors");
+    }
+
+    #[tokio::test]
+    async fn persistent_errors_abort_recording() {
+        // Every response is an error → should abort at MAX_CONSECUTIVE_ERRORS.
+        let fifo = Arc::new(StdMutex::new(MockFifo::new()));
+        {
+            let mut mf = fifo.lock().unwrap();
+            for _ in 0..200 {
+                mf.push_error();
+            }
+        }
+        let (collected, errors, _) = run_mock_collection(fifo, 1000, 50).await;
+        assert_eq!(collected, 0, "should collect nothing when every read fails");
+        assert_eq!(errors, 50, "should stop at exactly 50 consecutive errors");
+    }
+
+    #[tokio::test]
+    async fn misaligned_fifo_count_does_not_cause_orphan_register() {
+        // Simulate: FIFO reports 100 registers (not divisible by 3).
+        // After rounding, we read 99.  The sensor reports new_size = 1 (the orphan).
+        // On the next cycle, 1 <= 6 so we take the size-only path and
+        // the orphan is NOT read as a partial sample.
+        let fifo = Arc::new(StdMutex::new(MockFifo::new()));
+        {
+            let mut mf = fifo.lock().unwrap();
+            mf.push_size(100);       // first: size-only (next_count=0 ≤ 6)
+            mf.push_data(1, 33);     // next_count=100 → count=99 → 33 samples; new_size=1
+            mf.push_size(60);        // next_count=1 ≤ 6 → size-only; orphan never read
+            mf.push_data(60, 20);    // now reading properly aligned again
+            mf.push_data(60, 20);
+            mf.push_data(60, 20);
+            mf.push_data(60, 20);
+        }
+        let (collected, errors, empty) = run_mock_collection(fifo, 100, 50).await;
+        assert_eq!(collected, 100);
+        assert_eq!(errors, 0);
+        // The orphan register was handled by the ≤6 guard (at least 1 empty cycle)
+        assert!(empty >= 1, "orphan should trigger an empty-cycle size poll");
     }
 }

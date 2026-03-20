@@ -1,0 +1,139 @@
+{
+    "date_created": "2026-03-20T03:47:16.131337",
+    "lib_checksum": "bb09363cca997f23a89d41b06f13e063",
+    "compiler_info": {
+        "cc_version": "aarch64-none-linux-gnu-gcc (Arm GNU Toolchain 13.2.rel1 (Build arm-13.7)) 13.2.1 20231009"
+    },
+    "use_case": "classification",
+    "data_info": {
+        "learning_sample_num": 0,
+        "n_samples": 1953,
+        "n_channels": 3,
+        "label": [
+            "1",
+            "2",
+            "3",
+            "4"
+        ]
+    },
+    "platform_info": {
+        "arch": "cortex-a55",
+        "chip": "i.MX93"
+    },
+    "memory_usage (Byte)": {
+        "flash": 36706,
+        "ram": 25184
+    },
+    "model_info": {
+        "name": "XGBoost",
+        "type": "CML",
+        "task": "CLS",
+        "description": "Optimized distributed gradient boosting library",
+        "enable": true
+    },
+    "benchmark": {
+        "performance": {
+            "score": 0.9998998268260623,
+            "balanced_accuracy": 1.0,
+            "f1_score": 1.0,
+            "recall_per_class": [
+                1.0,
+                1.0,
+                1.0,
+                1.0
+            ],
+            "roc_auc": 1.0,
+            "matthews_corrcoef": 1.0,
+            "confusion_matrix": [
+                [
+                    170,
+                    0,
+                    0,
+                    0
+                ],
+                [
+                    0,
+                    170,
+                    0,
+                    0
+                ],
+                [
+                    0,
+                    0,
+                    170,
+                    0
+                ],
+                [
+                    0,
+                    0,
+                    0,
+                    170
+                ]
+            ],
+            "confusion_matrix_true": [
+                [
+                    1.0,
+                    0.0,
+                    0.0,
+                    0.0
+                ],
+                [
+                    0.0,
+                    1.0,
+                    0.0,
+                    0.0
+                ],
+                [
+                    0.0,
+                    0.0,
+                    1.0,
+                    0.0
+                ],
+                [
+                    0.0,
+                    0.0,
+                    0.0,
+                    1.0
+                ]
+            ],
+            "confusion_matrix_pred": [
+                [
+                    1.0,
+                    0.0,
+                    0.0,
+                    0.0
+                ],
+                [
+                    0.0,
+                    1.0,
+                    0.0,
+                    0.0
+                ],
+                [
+                    0.0,
+                    0.0,
+                    1.0,
+                    0.0
+                ],
+                [
+                    0.0,
+                    0.0,
+                    0.0,
+                    1.0
+                ]
+            ]
+        },
+        "execution_time": {
+            "chip": "",
+            "arch": "",
+            "frequency": "",
+            "value": 0
+        },
+        "estimated_memory_usage (Byte)": {
+            "RAM": 47772,
+            "Heap": 0,
+            "Model_Flash": 2238,
+            "Algo_Flash": 32708
+        }
+    }
+}
