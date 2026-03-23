@@ -21,6 +21,7 @@ use tracing::{error, info, warn};
 mod config;
 mod modbus;
 mod routes;
+mod tss_ml;
 mod types;
 
 use config::AppConfig;
@@ -312,7 +313,7 @@ fn spawn_metrics_tasks(
 
 // ── CSV viewer ────────────────────────────────────────────────────────────────
 
-const CSV_DATA_DIR: &str = "data";
+pub const CSV_DATA_DIR: &str = "data";
 
 fn list_csv_files() -> Vec<String> {
     let dir = std::path::PathBuf::from(CSV_DATA_DIR);
@@ -332,7 +333,7 @@ fn list_csv_files() -> Vec<String> {
     files
 }
 
-fn is_safe_csv_filename(name: &str) -> bool {
+pub fn is_safe_csv_filename(name: &str) -> bool {
     !name.is_empty()
         && !name.contains("..")
         && !name.contains('/')
@@ -416,6 +417,11 @@ async fn main() -> Result<()> {
     } else {
         config.sensors.first().map(|s| s.baud_rate).unwrap_or(115200)
     };
+
+    // Initialize ML model (aarch64 only; logs a warning on other platforms)
+    if let Err(e) = tss_ml::init_model() {
+        warn!("ML model init failed: {} — /{{}}/csv/infer will return errors", e);
+    }
 
     // Run startup diagnostics and spawn background tasks for each configured sensor
     let mut modbus_arcs: Vec<Arc<tokio::sync::RwLock<Option<ModbusClient>>>> = Vec::new();
@@ -520,9 +526,10 @@ async fn main() -> Result<()> {
         .route("/api/record/start", post(record_start_handler))
         .route("/api/record/status", get(record_status_handler))
 
-        // CSV viewer
+        // CSV viewer + ML inference
         .route("/view/csv", get(csv_list_page))
         .route("/view/csv/{filename}", get(csv_viewer_page))
+        .route("/{sensor}/csv/infer", post(routes::read::infer_csv))
 
         // Static files and diagnostics
         .route("/diagnostics", get(routes::diagnostics::get_diagnostics))

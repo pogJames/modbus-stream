@@ -38,12 +38,17 @@
     max-height: calc(100vh - 260px);
   }
 
+  .csv-file-item {
+    border-bottom: 1px solid var(--border-color);
+  }
+
+  .csv-file-item:last-child { border-bottom: none; }
+
   .csv-file-link {
     display: block;
-    padding: 0.5rem 1rem;
+    padding: 0.5rem 1rem 0.25rem;
     font-size: 0.775rem;
     color: var(--text-secondary);
-    border-bottom: 1px solid var(--border-color);
     transition: var(--transition);
     white-space: nowrap;
     overflow: hidden;
@@ -51,7 +56,6 @@
     font-family: 'JetBrains Mono', monospace;
   }
 
-  .csv-file-link:last-child { border-bottom: none; }
   .csv-file-link:hover { background: var(--background-light); color: var(--text-primary); }
   .csv-file-link.active {
     background: var(--background-light);
@@ -60,6 +64,42 @@
     border-left: 2px solid var(--blue);
     padding-left: calc(1rem - 2px);
   }
+
+  .file-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.125rem 1rem 0.375rem;
+  }
+
+  .infer-btn {
+    font-size: 0.65rem;
+    font-weight: 600;
+    padding: 0.125rem 0.5rem;
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius);
+    background: var(--background-light);
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-family: inherit;
+    transition: var(--transition);
+    flex-shrink: 0;
+  }
+
+  .infer-btn:hover:not(:disabled) { border-color: var(--blue); color: var(--blue); }
+  .infer-btn:disabled { opacity: 0.5; cursor: default; }
+
+  .infer-badge {
+    font-size: 0.6rem;
+    font-weight: 700;
+    padding: 0.1rem 0.375rem;
+    border-radius: 999px;
+    display: none;
+    white-space: nowrap;
+  }
+
+  .infer-badge.ok  { display: inline; background: #dcfce7; color: #166534; }
+  .infer-badge.err { display: inline; background: #fee2e2; color: #991b1b; }
 
   .csv-sidebar-empty {
     padding: 1rem;
@@ -297,11 +337,15 @@
     {% if files | length > 0 %}
     <ul class="csv-file-list">
       {% for file in files %}
-      <li>
+      <li class="csv-file-item">
         <a href="/view/csv/{{ file }}"
            class="csv-file-link{% if file == current_file %} active{% endif %}">
           {{ file }}
         </a>
+        <div class="file-actions">
+          <button class="infer-btn" data-file="{{ file }}">Infer</button>
+          <span class="infer-badge"></span>
+        </div>
       </li>
       {% endfor %}
     </ul>
@@ -380,6 +424,42 @@
     {% endif %}
   </div>
 </div>
+
+{% if files | length > 0 %}
+<script>
+// ── Infer buttons ─────────────────────────────────────────────────────────────
+document.querySelectorAll('.infer-btn').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    const file  = btn.dataset.file;
+    const badge = btn.nextElementSibling;
+    btn.disabled    = true;
+    btn.textContent = '…';
+    badge.className = 'infer-badge';
+
+    try {
+      const r    = await fetch(`/1/csv/infer?file=${encodeURIComponent(file)}`, { method: 'POST' });
+      const json = await r.json();
+      if (r.ok) {
+        badge.textContent = `Class ${json.class}`;
+        badge.className   = 'infer-badge ok';
+        badge.title       = `Probabilities: ${json.probabilities.map(p => p.toFixed(3)).join(', ')}`;
+      } else {
+        badge.textContent = 'Err';
+        badge.className   = 'infer-badge err';
+        badge.title       = json.error || 'Unknown error';
+      }
+    } catch (e) {
+      badge.textContent = 'Err';
+      badge.className   = 'infer-badge err';
+      badge.title       = String(e);
+    }
+
+    btn.disabled    = false;
+    btn.textContent = 'Infer';
+  });
+});
+</script>
+{% endif %}
 
 {% if current_file %}
 <script>

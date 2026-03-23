@@ -1,8 +1,9 @@
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Json},
 };
+use serde::Deserialize;
 use tracing::error;
 
 use crate::{types::ErrorResponse, AppState};
@@ -593,5 +594,102 @@ pub async fn get_all_metrics(
             }
         }
         None => handle_no_device().await.into_response(),
+    }
+}
+
+// ── ML inference ──────────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct InferQuery {
+    file: String,
+}
+
+/// POST /{sensor}/csv/infer?file=<filename>
+///
+/// Reads a recorded CSV file, slices the middle window that the model expects,
+/// and runs the TSS XGBoost classification model.  Data layout (interleaved vs
+/// channels-first) is determined at runtime from `algo_attribute().data_tab`.
+///
+/// Response: `{ "class": 1–4, "probabilities": [f32; 4] }`
+pub async fn infer_csv(
+    Path(_sensor): Path<u8>,
+    Query(q): Query<InferQuery>,
+) -> impl IntoResponse {
+    if !crate::is_safe_csv_filename(&q.file) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "Invalid filename" })),
+        )
+            .into_response();
+    }
+
+    let path = format!("{}/{}", crate::CSV_DATA_DIR, q.file);
+
+    let result = tokio::task::spawn_blocking(move || -> anyhow::Result<(u32, [f32; 4])> {
+        const TOTAL_SAMPLES: usize = 78120;
+
+        let model = crate::tss_ml::get_model()
+            .ok_or_else(|| anyhow::anyhow!("ML model not available on this platform"))?;
+
+        // Window size comes from the model's own algo_attribute (typically 1953).
+        let infer_samples = model.data_len();
+        let start = (TOTAL_SAMPLES - infer_samples) / 2;
+
+        let content = std::fs::read_to_string(&path)
+            .map_err(|e| anyhow::anyhow!("Failed to read {}: {}", path, e))?;
+
+        let mut xyz: Vec<(f32, f32, f32)> = Vec::with_capacity(TOTAL_SAMPLES);
+        for line in content.lines() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            let parts: Vec<&str> = line.split(',').collect();
+            // Support both [x,y,z] (3 columns) and [timestamp,x,y,z] (4 columns).
+            let (x_s, y_s, z_s) = if parts.len() == 3 {
+                (parts[0], parts[1], parts[2])
+            } else if parts.len() >= 4 {
+                (parts[1], parts[2], parts[3])
+            } else {
+                continue;
+            };
+            let Ok(x) = x_s.trim().parse::<f32>() else { continue };
+            let Ok(y) = y_s.trim().parse::<f32>() else { continue };
+            let Ok(z) = z_s.trim().parse::<f32>() else { continue };
+            xyz.push((x, y, z));
+        }
+
+        if xyz.len() < start + infer_samples {
+            return Err(anyhow::anyhow!(
+                "CSV has {} samples; need at least {} (window [{}, {}))",
+                xyz.len(),
+                start + infer_samples,
+                start,
+                start + infer_samples,
+            ));
+        }
+
+        // predict_window handles interleaved vs channels-first based on data_tab.
+        let window = &xyz[start..start + infer_samples];
+        model.predict_window(window)
+    })
+    .await;
+
+    match result {
+        Ok(Ok((class, probs))) => Json(serde_json::json!({
+            "class": class,
+            "probabilities": probs,
+        }))
+        .into_response(),
+        Ok(Err(e)) => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(serde_json::json!({ "error": e.to_string() })),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": format!("Internal error: {}", e) })),
+        )
+            .into_response(),
     }
 }
