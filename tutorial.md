@@ -86,9 +86,22 @@ You only need to rebuild the binary when `.rs` source files change. For everythi
 
 ## 3. Copy files to the device
 
-Find the board's IP address (check your router, or run `ip addr` on the board).
+Find the board's IP address by running this on the board over a serial console or monitor:
 
-Run the following on your **laptop** to copy everything in one go:
+```bash
+ip addr show
+```
+
+Look for an `inet` line under your active interface (e.g. `eth0` or `end0`):
+
+```
+2: eth0: ...
+    inet 192.168.1.142/24 ...
+```
+
+The address is the part before the `/` — in this example `192.168.1.142`.
+
+Run the following on your **laptop** to copy everything in one go (replace the address and path with your own):
 
 ```bash
 scp -r lib/ templates/ static/ data/ config.toml algorithm.dat \
@@ -203,7 +216,7 @@ If step 4 fails the server still starts in **offline mode** — the UI works but
 
 Open a browser on your laptop and go to:
 ```
-http://192.168.1.100:3000
+http://192.168.1.142:3000
 ```
 
 ---
@@ -280,8 +293,8 @@ cargo build --release --target aarch64-unknown-linux-gnu
 
 **Step 2 — copy everything to the board:**
 ```bash
-scp target/aarch64-unknown-linux-gnu/release/modbus-stream user@192.168.1.100:/opt/modbus-stream/
-scp /path/to/export/algorithm.dat                           user@192.168.1.100:/opt/modbus-stream/
+scp target/aarch64-unknown-linux-gnu/release/modbus-stream user@192.168.1.142:/opt/modbus-stream/
+scp /path/to/export/algorithm.dat                           user@192.168.1.142:/opt/modbus-stream/
 ```
 
 **Step 3 — restart the server:**
@@ -390,7 +403,7 @@ mkdir -p /opt/modbus-stream/data
 On your laptop:
 ```bash
 cargo build --release --target aarch64-unknown-linux-gnu
-scp target/aarch64-unknown-linux-gnu/release/modbus-stream user@192.168.1.100:/opt/modbus-stream/
+scp target/aarch64-unknown-linux-gnu/release/modbus-stream user@192.168.1.142:/opt/modbus-stream/
 ```
 
 If running as a service:

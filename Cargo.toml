@@ -50,6 +50,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Async utilities
 tokio-stream = "0.1"
 
+# FFT
+rustfft = "6"
+
 [dev-dependencies]
 tokio-test = "0.4"
 tempfile = "3.0"

@@ -166,6 +166,27 @@ pub enum WebSocketMessage {
         sequence: u64,
         data: Vec<AccelerationData>,
     },
+    /// FFT of the last `window` raw samples, one frame per axis.
+    /// Contains bins 1–65 only (DC skipped; display range ~8–494 Hz at 7812 Hz sample rate).
+    /// Magnitudes are peak-amplitude scaled (2/N).
+    #[serde(rename = "fft")]
+    FftData {
+        timestamp: DateTime<Utc>,
+        sequence: u64,
+        /// Number of time-domain samples used for this frame.
+        window: usize,
+        /// Sample rate used to compute the frequency axis (Hz).
+        #[serde(rename = "sampleRateHz")]
+        sample_rate_hz: f32,
+        /// Frequency of each bin in Hz (length = window/2 + 1).
+        frequencies: Vec<f32>,
+        /// Magnitude spectrum for X axis (same length as `frequencies`).
+        x: Vec<f32>,
+        /// Magnitude spectrum for Y axis.
+        y: Vec<f32>,
+        /// Magnitude spectrum for Z axis.
+        z: Vec<f32>,
+    },
     #[serde(rename = "metrics")]
     Metrics {
         timestamp: DateTime<Utc>,

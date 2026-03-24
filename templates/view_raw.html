@@ -5,6 +5,11 @@
   .view-header    { display:flex; align-items:center; gap:1rem; margin-bottom:1.5rem; flex-wrap:wrap; }
   .view-header h2 { font-size:1.4rem; font-weight:600; flex:1; }
 
+  /* Two-row tab bar */
+  .tab-bar { display:flex; align-items:center; gap:0.75rem; margin-bottom:1.25rem; flex-wrap:wrap; }
+  .tab-bar .divider { width:1px; height:28px; background:var(--border); flex-shrink:0; }
+
+  /* Range display */
   .range-grid {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
@@ -33,23 +38,46 @@
     align-items: baseline;
     padding: 2px 0;
   }
-  .range-label {
-    font-size: 0.72rem;
-    color: var(--text-secondary);
-    font-weight: 500;
-    width: 2.5rem;
+  .range-label { font-size:0.72rem; color:var(--text-secondary); font-weight:500; width:2.5rem; }
+  .range-val   { font-family:'JetBrains Mono',monospace; font-size:0.875rem; font-weight:500; letter-spacing:-0.02em; }
+  .range-card.x .range-val { color:#ef4444; }
+  .range-card.y .range-val { color:#22c55e; }
+  .range-card.z .range-val { color:#3b82f6; }
+
+  /* Peak-freq cards (FFT panel) */
+  .peak-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.75rem;
+    margin-bottom: 1.25rem;
   }
-  .range-val {
+  .peak-card {
+    background: var(--background-white);
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius);
+    padding: 0.875rem 1.125rem;
+    text-align: center;
+  }
+  .peak-card .axis-label {
+    font-size: 0.65rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: var(--text-secondary);
+    margin-bottom: 0.5rem;
+  }
+  .peak-card .peak-val {
     font-family: 'JetBrains Mono', monospace;
-    font-size: 0.875rem;
+    font-size: 1.25rem;
     font-weight: 500;
     letter-spacing: -0.02em;
   }
-  .range-card.x .range-val { color: #ef4444; }
-  .range-card.y .range-val { color: #22c55e; }
-  .range-card.z .range-val { color: #3b82f6; }
+  .peak-card .peak-unit { font-size:0.7rem; color:var(--text-secondary); margin-top:0.2rem; }
+  .peak-card.x .peak-val { color:#ef4444; }
+  .peak-card.y .peak-val { color:#22c55e; }
+  .peak-card.z .peak-val { color:#3b82f6; }
 
-
+  /* Shared chart card */
   .chart-card {
     background: var(--background-white);
     border: 1px solid var(--border-color);
@@ -85,63 +113,131 @@
     border-color: var(--blue);
     box-shadow: 0 0 0 2px rgb(37 99 235 / 0.1);
   }
+  .sample-counter {
+    font-size: 0.72rem;
+    color: var(--text-secondary);
+    margin-top: 0.5rem;
+    text-align: right;
+    font-family: 'JetBrains Mono', monospace;
+  }
 
-  .sample-counter { font-size:0.72rem; color:var(--text-secondary); margin-top:0.5rem; text-align:right; font-family:'JetBrains Mono',monospace; }
+  /* Log scale toggle */
+  .toggle-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    cursor: pointer;
+    user-select: none;
+  }
 </style>
 
 <div style="padding:2rem 0;">
   <div class="view-header">
-    <h2>Raw Data Stream</h2>
+    <h2>Live Stream</h2>
     <span class="ws-status" id="ws-status">Connecting…</span>
   </div>
 
-  <div class="tabs-list" style="margin-bottom:1.5rem;">
-    {% for i in range(1, sensor_count + 1) %}<a href="/{{ i }}/view/raw" class="tabs-trigger{% if sensor == i %} active{% endif %}">Sensor {{ i }}</a>{% endfor %}
-  </div>
+  <!-- Tab row 1: sensor selector -->
+  <div class="tab-bar">
+    <div class="tabs-list">
+      {% for i in range(1, sensor_count + 1) %}<a href="/{{ i }}/view/raw" class="tabs-trigger{% if sensor == i %} active{% endif %}">Sensor {{ i }}</a>{% endfor %}
+    </div>
 
-  <!-- Range display -->
-  <div class="range-grid">
-    <div class="range-card x">
-      <div class="axis-label">X Axis</div>
-      <div class="range-row"><span class="range-label">min</span><span class="range-val" id="rng-x-min">—</span></div>
-      <div class="range-row"><span class="range-label">max</span><span class="range-val" id="rng-x-max">—</span></div>
-    </div>
-    <div class="range-card y">
-      <div class="axis-label">Y Axis</div>
-      <div class="range-row"><span class="range-label">min</span><span class="range-val" id="rng-y-min">—</span></div>
-      <div class="range-row"><span class="range-label">max</span><span class="range-val" id="rng-y-max">—</span></div>
-    </div>
-    <div class="range-card z">
-      <div class="axis-label">Z Axis</div>
-      <div class="range-row"><span class="range-label">min</span><span class="range-val" id="rng-z-min">—</span></div>
-      <div class="range-row"><span class="range-label">max</span><span class="range-val" id="rng-z-max">—</span></div>
+    <div class="divider"></div>
+
+    <!-- Tab row 2: stream type -->
+    <div class="tabs-list" id="stream-tabs">
+      <button class="tabs-trigger active" id="tab-time" onclick="switchTab('time')">Time Domain</button>
+      <button class="tabs-trigger"        id="tab-freq" onclick="switchTab('freq')">Frequency</button>
     </div>
   </div>
 
-  <!-- Chart -->
-  <div class="chart-card">
-    <div class="chart-toolbar">
-      <span class="toolbar-label" id="window-label">Last 200 samples</span>
-      <input type="number" id="window-input" class="window-input"
-             value="200" min="10" max="2000" step="1"
-             title="Number of samples to display">
-      <button id="pause-btn" class="btn btn-info" style="padding:4px 12px;font-size:0.8rem;">Pause</button>
+  <!-- ══════════ TIME DOMAIN PANEL ══════════ -->
+  <div id="panel-time">
+    <div class="range-grid">
+      <div class="range-card x">
+        <div class="axis-label">X Axis</div>
+        <div class="range-row"><span class="range-label">min</span><span class="range-val" id="rng-x-min">—</span></div>
+        <div class="range-row"><span class="range-label">max</span><span class="range-val" id="rng-x-max">—</span></div>
+      </div>
+      <div class="range-card y">
+        <div class="axis-label">Y Axis</div>
+        <div class="range-row"><span class="range-label">min</span><span class="range-val" id="rng-y-min">—</span></div>
+        <div class="range-row"><span class="range-label">max</span><span class="range-val" id="rng-y-max">—</span></div>
+      </div>
+      <div class="range-card z">
+        <div class="axis-label">Z Axis</div>
+        <div class="range-row"><span class="range-label">min</span><span class="range-val" id="rng-z-min">—</span></div>
+        <div class="range-row"><span class="range-label">max</span><span class="range-val" id="rng-z-max">—</span></div>
+      </div>
     </div>
-    <canvas id="chart"></canvas>
-    <div class="sample-counter" id="sample-count">0 samples received</div>
+
+    <div class="chart-card">
+      <div class="chart-toolbar">
+        <span class="toolbar-label" id="window-label">Last 200 samples</span>
+        <input type="number" id="window-input" class="window-input"
+               value="200" min="10" max="2000" step="1"
+               title="Number of samples to display">
+        <button id="pause-btn" class="btn btn-info" style="padding:4px 12px;font-size:0.8rem;">Pause</button>
+      </div>
+      <canvas id="chart-time"></canvas>
+      <div class="sample-counter" id="sample-count">0 samples received</div>
+    </div>
+  </div>
+
+  <!-- ══════════ FREQUENCY PANEL ══════════ -->
+  <div id="panel-freq" style="display:none;">
+    <div class="peak-grid">
+      <div class="peak-card x">
+        <div class="axis-label">X Peak</div>
+        <div class="peak-val" id="peak-x">—</div>
+        <div class="peak-unit">Hz</div>
+      </div>
+      <div class="peak-card y">
+        <div class="axis-label">Y Peak</div>
+        <div class="peak-val" id="peak-y">—</div>
+        <div class="peak-unit">Hz</div>
+      </div>
+      <div class="peak-card z">
+        <div class="axis-label">Z Peak</div>
+        <div class="peak-val" id="peak-z">—</div>
+        <div class="peak-unit">Hz</div>
+      </div>
+    </div>
+
+    <div class="chart-card">
+      <div class="chart-toolbar">
+        <span class="toolbar-label" id="fft-label">Waiting for FFT frame…</span>
+        <label class="toggle-label">
+          <input type="checkbox" id="log-scale" style="accent-color:var(--blue);">
+          Log scale
+        </label>
+        <button id="freeze-btn" class="btn btn-info" style="padding:4px 12px;font-size:0.8rem;">Freeze</button>
+      </div>
+      <canvas id="chart-freq"></canvas>
+      <div class="sample-counter" id="fft-count">0 FFT frames received</div>
+    </div>
   </div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script>
+// ── Tab switching ──────────────────────────────────────────────
+function switchTab(tab) {
+  document.getElementById('panel-time').style.display = tab === 'time' ? '' : 'none';
+  document.getElementById('panel-freq').style.display = tab === 'freq' ? '' : 'none';
+  document.getElementById('tab-time').classList.toggle('active', tab === 'time');
+  document.getElementById('tab-freq').classList.toggle('active', tab === 'freq');
+}
+
+// ── Time-domain chart ──────────────────────────────────────────
 let MAX_POINTS = 200;
 
-const xData  = [];
-const yData  = [];
-const zData  = [];
-const labels = [];
+const xData  = [], yData  = [], zData  = [], labels = [];
 
-const chart = new Chart(document.getElementById('chart'), {
+const chartTime = new Chart(document.getElementById('chart-time'), {
   type: 'line',
   data: {
     labels,
@@ -159,27 +255,21 @@ const chart = new Chart(document.getElementById('chart'), {
       x: { display: false },
       y: {
         title: { display: true, text: 'g', color: '#888' },
-        grid:  { color: '#2a2a2a' },
+        grid:  { color: '#eee' },
         ticks: { color: '#888' }
       }
     },
-    plugins: { legend: { labels: { color: '#ccc', usePointStyle: true, pointStyle: 'circle' } } }
+    plugins: { legend: { labels: { color: '#555', usePointStyle: true, pointStyle: 'circle' } } }
   }
 });
 
-// ── Window control ────────────────────────────────────────────
+// Window control
 function setWindow(n) {
   MAX_POINTS = n;
   const drop = xData.length - MAX_POINTS;
-  if (drop > 0) {
-    xData.splice(0, drop);
-    yData.splice(0, drop);
-    zData.splice(0, drop);
-    labels.splice(0, drop);
-  }
+  if (drop > 0) { xData.splice(0, drop); yData.splice(0, drop); zData.splice(0, drop); labels.splice(0, drop); }
   document.getElementById('window-label').textContent = `Last ${n.toLocaleString()} samples`;
 }
-
 const windowInput = document.getElementById('window-input');
 windowInput.addEventListener('change', () => {
   const n = Math.max(10, Math.min(2000, parseInt(windowInput.value, 10) || 100));
@@ -187,25 +277,15 @@ windowInput.addEventListener('change', () => {
   setWindow(n);
 });
 
-// ── Range computation ─────────────────────────────────────────
+// Range computation
 function rangeOf(arr) {
   let min = Infinity, max = -Infinity;
-  for (const v of arr) {
-    if (v == null) continue;
-    if (v < min) min = v;
-    if (v > max) max = v;
-  }
+  for (const v of arr) { if (v == null) continue; if (v < min) min = v; if (v > max) max = v; }
   return min === Infinity ? null : { min, max };
 }
-
-function fmtG(v) {
-  return v == null ? '—' : (v >= 0 ? '+' : '') + v.toFixed(4);
-}
-
+function fmtG(v) { return v == null ? '—' : (v >= 0 ? '+' : '') + v.toFixed(4); }
 function updateRanges() {
-  const rx = rangeOf(xData);
-  const ry = rangeOf(yData);
-  const rz = rangeOf(zData);
+  const rx = rangeOf(xData), ry = rangeOf(yData), rz = rangeOf(zData);
   document.getElementById('rng-x-min').textContent = rx ? fmtG(rx.min) : '—';
   document.getElementById('rng-x-max').textContent = rx ? fmtG(rx.max) : '—';
   document.getElementById('rng-y-min').textContent = ry ? fmtG(ry.min) : '—';
@@ -214,36 +294,124 @@ function updateRanges() {
   document.getElementById('rng-z-max').textContent = rz ? fmtG(rz.max) : '—';
 }
 
-// ── Render loop (~30 fps) ─────────────────────────────────────
-let pending = [];
-let paused  = false;
-let totalSamples = 0;
-
+// Render loop (~30 fps)
+let pending = [], paused = false, totalSamples = 0;
 setInterval(() => {
   if (paused || pending.length === 0) return;
-
-  for (const s of pending) {
-    xData.push(s.x);
-    yData.push(s.y);
-    zData.push(s.z);
-    labels.push('');
-  }
+  for (const s of pending) { xData.push(s.x); yData.push(s.y); zData.push(s.z); labels.push(''); }
   pending = [];
-
-  // trim to window
   const drop = xData.length - MAX_POINTS;
-  if (drop > 0) {
-    xData.splice(0, drop);
-    yData.splice(0, drop);
-    zData.splice(0, drop);
-    labels.splice(0, drop);
-  }
-
+  if (drop > 0) { xData.splice(0, drop); yData.splice(0, drop); zData.splice(0, drop); labels.splice(0, drop); }
   updateRanges();
-  chart.update('none');
+  chartTime.update('none');
 }, 33);
 
-// ── WebSocket ─────────────────────────────────────────────────
+document.getElementById('pause-btn').addEventListener('click', function() {
+  paused = !paused;
+  this.textContent = paused ? 'Resume' : 'Pause';
+  this.style.background = paused ? 'var(--muted)' : '';
+});
+
+// ── FFT / frequency-domain chart ───────────────────────────────
+const chartFreq = new Chart(document.getElementById('chart-freq'), {
+  type: 'line',
+  data: {
+    labels: [],          // frequency bins (Hz), set on first frame
+    datasets: [
+      { label: 'X (g)', data: [], borderColor: '#ef4444', borderWidth: 1.5, pointRadius: 0, tension: 0, fill: false },
+      { label: 'Y (g)', data: [], borderColor: '#22c55e', borderWidth: 1.5, pointRadius: 0, tension: 0, fill: false },
+      { label: 'Z (g)', data: [], borderColor: '#3b82f6', borderWidth: 1.5, pointRadius: 0, tension: 0, fill: false },
+    ]
+  },
+  options: {
+    animation: false,
+    responsive: true,
+    interaction: { mode: 'index', intersect: false },
+    scales: {
+      x: {
+        type: 'category',
+        title: { display: true, text: 'Frequency (Hz)', color: '#888' },
+        ticks: {
+          color: '#888',
+          maxTicksLimit: 12,
+          callback: function(val, idx) {
+            // Show every Nth label to avoid crowding
+            return this.getLabelForValue(val);
+          }
+        },
+        grid: { color: '#eee' }
+      },
+      y: {
+        title: { display: true, text: 'Amplitude (g pk)', color: '#888' },
+        grid:  { color: '#eee' },
+        ticks: { color: '#888' }
+      }
+    },
+    plugins: {
+      legend: { labels: { color: '#555', usePointStyle: true, pointStyle: 'circle' } },
+      tooltip: {
+        callbacks: {
+          title: items => `${parseFloat(items[0].label).toFixed(1)} Hz`,
+          label: item => `${item.dataset.label}: ${item.raw.toExponential(3)} g`,
+        }
+      }
+    }
+  }
+});
+
+// Log-scale toggle
+document.getElementById('log-scale').addEventListener('change', function() {
+  chartFreq.options.scales.y.type = this.checked ? 'logarithmic' : 'linear';
+  if (this.checked) {
+    chartFreq.options.scales.y.min = undefined; // let Chart.js pick a sensible floor
+  }
+  chartFreq.update('none');
+});
+
+// Peak-frequency finder
+function peakFreq(magnitudes, frequencies) {
+  let maxIdx = 1; // skip DC bin 0
+  for (let i = 2; i < magnitudes.length; i++) {
+    if (magnitudes[i] > magnitudes[maxIdx]) maxIdx = i;
+  }
+  return frequencies[maxIdx];
+}
+
+let frozen = false, fftFrames = 0;
+let freqLabels = null;   // set once on first frame (fixed by sample-rate + window)
+
+function handleFftFrame(msg) {
+  if (frozen) return;
+  fftFrames++;
+
+  // Build frequency label strings once
+  if (!freqLabels) {
+    freqLabels = msg.frequencies.map(f => f.toFixed(1));
+    chartFreq.data.labels = freqLabels;
+  }
+
+  chartFreq.data.datasets[0].data = msg.x;
+  chartFreq.data.datasets[1].data = msg.y;
+  chartFreq.data.datasets[2].data = msg.z;
+  chartFreq.update('none');
+
+  // Peak frequencies (skip DC at index 0)
+  document.getElementById('peak-x').textContent = peakFreq(msg.x, msg.frequencies).toFixed(1);
+  document.getElementById('peak-y').textContent = peakFreq(msg.y, msg.frequencies).toFixed(1);
+  document.getElementById('peak-z').textContent = peakFreq(msg.z, msg.frequencies).toFixed(1);
+
+  document.getElementById('fft-label').textContent =
+    `Frame ${fftFrames} — window ${msg.window} samples @ ${msg.sampleRateHz} Hz`;
+  document.getElementById('fft-count').textContent = `${fftFrames} FFT frames received`;
+}
+
+document.getElementById('freeze-btn').addEventListener('click', function() {
+  frozen = !frozen;
+  this.textContent = frozen ? 'Unfreeze' : 'Freeze';
+  this.style.background = frozen ? 'var(--muted)' : '';
+});
+
+// ── WebSocket ──────────────────────────────────────────────────
 const ws       = new WebSocket(`ws://${location.host}/{{ sensor }}/stream/raw`);
 const statusEl = document.getElementById('ws-status');
 const countEl  = document.getElementById('sample-count');
@@ -254,18 +422,14 @@ ws.onerror = () => { statusEl.textContent = 'Error';        statusEl.className =
 
 ws.onmessage = ({ data }) => {
   const msg = JSON.parse(data);
+
   if (msg.type === 'raw' && Array.isArray(msg.data) && msg.data.length > 0) {
     pending.push(...msg.data);
     totalSamples += msg.data.length;
     countEl.textContent = `${totalSamples.toLocaleString()} samples received`;
+  } else if (msg.type === 'fft') {
+    handleFftFrame(msg);
   }
 };
-
-// ── Pause / resume ────────────────────────────────────────────
-document.getElementById('pause-btn').addEventListener('click', function() {
-  paused = !paused;
-  this.textContent = paused ? 'Resume' : 'Pause';
-  this.style.background = paused ? 'var(--muted)' : '';
-});
 </script>
 {% endblock %}
