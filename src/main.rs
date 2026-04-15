@@ -198,6 +198,9 @@ async fn run_startup_diagnostics(
                 println!("         Model:    {} | Gain: {}", ucid.model, ucid.gain);
                 println!("         Serial:   {}", ucid.serial_number);
             }
+            if let Ok(sr) = client.read_sample_rate().await {
+                println!("         Sample rate: {} Hz", sr);
+            }
             if let Ok(temp) = client.read_temperature().await {
                 println!("         Temp:     {:.1}°C", temp);
             }

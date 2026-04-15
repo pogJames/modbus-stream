@@ -11,19 +11,10 @@ use tracing::{error, info, warn};
 use anyhow::Result;
 use chrono::Utc;
 
-/// Size of the FFT window in samples (power of 2).
-/// At 7812 Hz: freq resolution ≈ 7.6 Hz, collection time ≈ 131 ms.
-const FFT_WINDOW: usize = 1024;
-
-/// Assumed sensor sample rate used for the frequency axis.
-/// Must match the rate configured in the device (register 0x0001).
+const FFT_WINDOW: usize = 4096;
 const SAMPLE_RATE_HZ: f32 = 7812.0;
-
-/// Bin range sent to clients.
-/// Skip bin 0 (DC) and cap at bin 65 (~494 Hz) — the useful vibration band.
-/// Resolution: 7812 / 1024 ≈ 7.6 Hz/bin → bin 65 ≈ 494 Hz.
 const FFT_BIN_START: usize = 2;
-const FFT_BIN_END:   usize = 66;
+const FFT_BIN_END:   usize = 262;
 
 /// Apply a Hann window in-place to reduce spectral leakage.
 fn apply_hann(buf: &mut [f32]) {

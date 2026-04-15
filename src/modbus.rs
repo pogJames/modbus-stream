@@ -154,6 +154,11 @@ impl ModbusClient {
     }
 
     /// Read temperature
+    pub async fn read_sample_rate(&self) -> Result<u16> {
+        let data = self.read_holding_registers(registers::SAMPLE_RATE, 1).await?;
+        Ok(data[0])
+    }
+
     pub async fn read_temperature(&self) -> Result<f64> {
         let data = self
             .read_holding_registers(registers::TEMPERATURE, 1)
