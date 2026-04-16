@@ -177,6 +177,9 @@ impl StreamManager {
                     error!("Raw data read failed: {}", e);
                     next_count = 0;
                     tokio::time::sleep(Duration::from_millis(100)).await;
+                    if tx.receiver_count() == 0 {
+                        break;
+                    }
                 }
             }
         }
@@ -406,8 +409,12 @@ async fn handle_raw_websocket(mut socket: WebSocket, client: Arc<tokio::sync::Rw
         }
     }
 
-    // Clean up
-    read_task.abort();
+    // Let the read task self-terminate: now that rx is dropped, the next
+    // tx.send() inside start_raw_streaming will return SendError and the
+    // task will exit cleanly after finishing its current Modbus transaction.
+    // Calling abort() here would cancel the task mid-transaction, leaving
+    // stale response bytes in the serial buffer that corrupt the next session.
+    drop(read_task);
     info!("Raw data WebSocket connection closed");
 }
 
