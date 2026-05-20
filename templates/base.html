@@ -9,6 +9,13 @@
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
     <link rel="stylesheet" href="/static/css/style.css">
     <script src="https://unpkg.com/htmx.org@1.9.10" integrity="sha384-D1Kt99CQMDuVetoL1lrYwg5t+9QdHe7NLX/SoJYkXDFfX37iInKRy5xLSi8nO7UC" crossorigin="anonymous"></script>
+    <script>
+        // Apply saved language to <html> before paint to minimize flicker.
+        (function () {
+            var saved = localStorage.getItem('lang') === 'zh-Hant' ? 'zh-Hant' : 'en';
+            document.documentElement.lang = saved;
+        })();
+    </script>
 </head>
 <body>
     <nav class="navbar">
@@ -17,9 +24,7 @@
                 <a href="/" class="brand-link">Modbus Stream</a>
             </div>
             <div class="navbar-nav">
-                <a href="/" class="nav-link">Dashboard</a>
-                <a href="/view/diagnostics" class="nav-link">Diagnostics</a>
-                <a href="/settings" class="nav-link">Settings</a>
+                <button type="button" id="lang-toggle" class="btn lang-toggle" aria-label="Toggle language">中文</button>
             </div>
         </div>
     </nav>
@@ -33,5 +38,7 @@
             Modbus Stream v{{ version or "1.5.2" }} — Tri-axial Accelerometer Interface
         </div>
     </footer>
+
+    <script src="/static/js/i18n.js"></script>
 </body>
 </html>

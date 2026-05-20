@@ -126,6 +126,14 @@ a { color: inherit; text-decoration: none; }
   background: var(--muted);
 }
 
+.lang-toggle {
+  background: transparent;
+  border: 1px solid var(--border);
+  cursor: pointer;
+  font-family: inherit;
+  min-width: 3rem;
+}
+
 /* ─── Page header (data pages) ────────────────────────────────── */
 .page-header {
   display: flex;

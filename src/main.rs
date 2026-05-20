@@ -198,6 +198,12 @@ async fn run_startup_diagnostics(
                 println!("         Model:    {} | Gain: {}", ucid.model, ucid.gain);
                 println!("         Serial:   {}", ucid.serial_number);
             }
+            // Enforce sample rate to match RECORD_TARGET assumption (7812 Hz → 10 s).
+            // Mirrors sensor_reader.py:76 — without this, the sensor keeps whatever
+            // rate it was last configured at, which throws off recording duration.
+            if let Err(e) = client.set_sample_rate(7812).await {
+                println!("         ⚠ Failed to set sample rate to 7812 Hz: {}", e);
+            }
             if let Ok(sr) = client.read_sample_rate().await {
                 println!("         Sample rate: {} Hz", sr);
             }
@@ -655,6 +661,20 @@ async fn run_recording_sensor(
     let sensor_n = idx + 1;
     info!("[Sensor {}] Recording task started, target {} samples", sensor_n, RECORD_TARGET);
 
+    // ── Reset FIFO by re-initializing streaming via sample-rate write ─────────
+    // Per the Modbus spec (Sample Rate Change § note): "Send this command before
+    // reading data to initialize streaming." If that resets the FIFO, recording
+    // starts with no stale backlog and the 78120-sample target takes a true 10 s.
+    {
+        let guard = modbus_client.read().await;
+        if let Some(client) = &*guard {
+            match client.set_sample_rate(7812).await {
+                Ok(()) => info!("[Sensor {}] Sample rate re-initialized (7812 Hz) — FIFO should be reset", sensor_n),
+                Err(e) => warn!("[Sensor {}] Sample rate write failed (continuing anyway): {}", sensor_n, e),
+            }
+        }
+    }
+
     // ── Phase 1: collect ──────────────────────────────────────────────────────
     let mut buf: Vec<types::AccelerationData> = Vec::with_capacity(RECORD_TARGET as usize);
     let mut next_count: u16 = 0;
@@ -726,20 +746,20 @@ async fn run_recording_sensor(
         let result: anyhow::Result<(u16, Vec<types::AccelerationData>)> = if next_count <= 6 {
             empty_cycles += 1;
             match tokio::time::timeout(
-                Duration::from_millis(200),
+                Duration::from_millis(100),
                 client.read_fifo_buffer_size(),
             ).await {
                 Ok(r) => r.map(|sz| (sz, vec![])),
-                Err(_) => Err(anyhow::anyhow!("Modbus read timed out after 200ms")),
+                Err(_) => Err(anyhow::anyhow!("Modbus read timed out after 100ms")),
             }
         } else {
             let count = fifo_read_count(next_count);
             match tokio::time::timeout(
-                Duration::from_millis(200),
+                Duration::from_millis(100),
                 client.read_fifo_combined(count),
             ).await {
                 Ok(r) => r,
-                Err(_) => Err(anyhow::anyhow!("Modbus read timed out after 200ms")),
+                Err(_) => Err(anyhow::anyhow!("Modbus read timed out after 100ms")),
             }
         };
         let read_ms = t_read.elapsed().as_millis();
