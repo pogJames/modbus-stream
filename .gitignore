@@ -53,3 +53,4 @@ coverage/
 # Monitoring data
 monitoring/data/
 grafana-data/
+recorded-data/

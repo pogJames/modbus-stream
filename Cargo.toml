@@ -53,6 +53,9 @@ tokio-stream = "0.1"
 # FFT
 rustfft = "6"
 
+# Resampling
+rubato = "0.15"
+
 [dev-dependencies]
 tokio-test = "0.4"
 tempfile = "3.0"

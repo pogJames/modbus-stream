@@ -570,7 +570,12 @@ async fn main() -> Result<()> {
 
 // ── Recording ─────────────────────────────────────────────────────────────────
 
-const RECORD_TARGET: u64 = 78120; // 10 seconds at 7812 Hz
+/// Wall-clock recording window. Each sensor records for exactly this long; the
+/// actual sample count will vary slightly per sensor due to clock drift.
+const RECORD_DURATION_SECS: f64 = 10.0;
+/// Expected sample count at nominal 7812 Hz, used for status reporting and % progress.
+/// Actual collected counts will differ by a few percent per sensor.
+const RECORD_TARGET: u64 = 78120;
 
 async fn record_start_handler(State(state): State<AppState>) -> impl IntoResponse {
     // 1. Probe which sensors are connected (read lock, no write)
@@ -659,12 +664,15 @@ async fn run_recording_sensor(
     timestamp: String,
 ) {
     let sensor_n = idx + 1;
-    info!("[Sensor {}] Recording task started, target {} samples", sensor_n, RECORD_TARGET);
+    info!(
+        "[Sensor {}] Recording task started, window {:.1} s (~{} samples @ 7812 Hz)",
+        sensor_n, RECORD_DURATION_SECS, RECORD_TARGET
+    );
 
     // ── Reset FIFO by re-initializing streaming via sample-rate write ─────────
     // Per the Modbus spec (Sample Rate Change § note): "Send this command before
     // reading data to initialize streaming." If that resets the FIFO, recording
-    // starts with no stale backlog and the 78120-sample target takes a true 10 s.
+    // starts with no stale backlog.
     {
         let guard = modbus_client.read().await;
         if let Some(client) = &*guard {
@@ -687,12 +695,12 @@ async fn run_recording_sensor(
     let mut last_log_time = tokio::time::Instant::now();
     let mut last_progress_time = tokio::time::Instant::now();
     let mut last_progress_n: usize = 0;
-    // Separate from last_progress_time (which is reset by the stuck-log timer);
-    // this one only moves when actual samples land — used for the 60 s abort.
-    let mut no_progress_since = tokio::time::Instant::now();
+
+    let record_start = tokio::time::Instant::now();
+    let deadline = record_start + Duration::from_secs_f64(RECORD_DURATION_SECS);
 
     loop {
-        if buf.len() >= RECORD_TARGET as usize {
+        if tokio::time::Instant::now() >= deadline {
             break;
         }
 
@@ -709,23 +717,6 @@ async fn run_recording_sensor(
             // Reset timer so we warn again in another 5 s, not every loop
             last_progress_time = tokio::time::Instant::now();
             last_progress_n = buf.len();
-        }
-
-        // ── Time-based abort (60 s without any new samples) ──────────────────
-        if no_progress_since.elapsed() > Duration::from_secs(60) {
-            error!(
-                "[Sensor {}] Aborting: no samples collected for 60 s \
-                 (at {}/{} samples, total_errors={}, consecutive_errors={})",
-                sensor_n, buf.len(), RECORD_TARGET, total_errors, consecutive_errors
-            );
-            let mut rec = recording.lock().await;
-            rec.sensors[idx].active = false;
-            rec.sensors[idx].error = Some(format!(
-                "No progress for 60 s — {} total Modbus errors",
-                total_errors
-            ));
-            update_overall_active(&mut rec);
-            return;
         }
 
         let guard = modbus_client.read().await;
@@ -777,9 +768,6 @@ async fn run_recording_sensor(
 
                 let before = buf.len();
                 for sample in data {
-                    if buf.len() >= RECORD_TARGET as usize {
-                        break;
-                    }
                     buf.push(sample);
                 }
                 let added = (buf.len() - before) as u64;
@@ -787,7 +775,6 @@ async fn run_recording_sensor(
                 if added > 0 {
                     last_progress_time = tokio::time::Instant::now();
                     last_progress_n = buf.len();
-                    no_progress_since = tokio::time::Instant::now();
                 }
 
                 let n = buf.len() as u64;
@@ -850,15 +837,96 @@ async fn run_recording_sensor(
 
     let write_result = tokio::task::spawn_blocking(move || -> std::io::Result<u64> {
         use std::io::Write;
+        use rubato::{
+            Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType,
+            WindowFunction,
+        };
+
+        // ── Resample to uniform 7812 Hz grid ─────────────────────────────
+        let n_in = buf.len();
+        let ratio = RECORD_TARGET as f64 / n_in as f64;
+
+        let mut cx: Vec<f32> = buf.iter().map(|s| s.x as f32).collect();
+        let mut cy: Vec<f32> = buf.iter().map(|s| s.y as f32).collect();
+        let mut cz: Vec<f32> = buf.iter().map(|s| s.z as f32).collect();
+
+        let params = SincInterpolationParameters {
+            sinc_len: 128,
+            f_cutoff: 0.95,
+            oversampling_factor: 256,
+            interpolation: SincInterpolationType::Cubic,
+            window: WindowFunction::BlackmanHarris2,
+        };
+
+        const CHUNK: usize = 4096;
+        let mut resampler = SincFixedIn::<f32>::new(ratio, 1.0, params, CHUNK, 3)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+
+        let delay = resampler.output_delay();
+
+        // Prepend one full chunk of edge-replicated samples so the sinc window
+        // is fully primed before real data enters; we strip `delay` output samples after.
+        let head = [
+            cx.first().copied().unwrap_or(0.0),
+            cy.first().copied().unwrap_or(0.0),
+            cz.first().copied().unwrap_or(0.0),
+        ];
+        for (ch, h) in [&mut cx, &mut cy, &mut cz].iter_mut().zip(head) {
+            let mut padded = vec![h; CHUNK];
+            padded.extend_from_slice(ch);
+            **ch = padded;
+        }
+
+        // Round total input up to a multiple of CHUNK for whole-chunk processing.
+        let pad_to = ((cx.len() + CHUNK - 1) / CHUNK) * CHUNK;
+        for ch in [&mut cx, &mut cy, &mut cz] {
+            let last = ch.last().copied().unwrap_or(0.0);
+            ch.resize(pad_to, last);
+        }
+
+        let mut out: [Vec<f32>; 3] = [Vec::new(), Vec::new(), Vec::new()];
+        let mut pos = 0;
+        while pos + CHUNK <= cx.len() {
+            let chunk_in: [&[f32]; 3] = [
+                &cx[pos..pos + CHUNK],
+                &cy[pos..pos + CHUNK],
+                &cz[pos..pos + CHUNK],
+            ];
+            let chunk_out = resampler
+                .process(&chunk_in, None)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+            for (i, o) in chunk_out.iter().enumerate() {
+                out[i].extend_from_slice(o);
+            }
+            pos += CHUNK;
+        }
+
+        // Strip group delay, then trim or extend to exactly RECORD_TARGET samples.
+        for ch in &mut out {
+            if ch.len() > delay {
+                *ch = ch[delay..].to_vec();
+            }
+        }
+        let target = RECORD_TARGET as usize;
+        for ch in &mut out {
+            let last = ch.last().copied().unwrap_or(0.0);
+            ch.resize(target, last);
+        }
+
+        tracing::info!(
+            "[Sensor {}] Resampled {} → {} samples  ratio={:.6}  delay={}",
+            sensor_n, n_in, target, ratio, delay
+        );
+
+        // ── Write CSV ─────────────────────────────────────────────────────
         let file = std::fs::File::create(&path)?;
-        let mut writer = std::io::BufWriter::with_capacity(1 << 20, file); // 1 MB buffer
+        let mut writer = std::io::BufWriter::with_capacity(1 << 20, file);
         writeln!(writer, "x,y,z")?;
-        for sample in &buf {
-            writeln!(writer, "{},{},{}", sample.x, sample.y, sample.z)?;
+        for i in 0..target {
+            writeln!(writer, "{},{},{}", out[0][i], out[1][i], out[2][i])?;
         }
         writer.flush()?;
-        // Return bytes written as approximate size (header + rows)
-        Ok(buf.len() as u64 * 30) // rough estimate; not critical
+        Ok(target as u64 * 30)
     })
     .await;
 
