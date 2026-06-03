@@ -51,7 +51,7 @@ jobs:
         run: cargo check --all-targets
 
       - name: cargo clippy
-        run: cargo clippy --all-targets --
+        run: cargo clippy --all-targets -- -D warnings
 
   # ── 2. Cross-compile for aarch64 ──────────────────────────────────────────
   # This is the real deployment target — NXP i.MX93 / Matrix 800.
@@ -82,6 +82,8 @@ jobs:
           key: aarch64
 
       - name: Build release binary
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
         run: cargo build --release --target aarch64-unknown-linux-gnu
 
       - name: Upload binary artifact
