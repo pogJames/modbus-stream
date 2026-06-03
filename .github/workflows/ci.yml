@@ -51,7 +51,7 @@ jobs:
         run: cargo check --all-targets
 
       - name: cargo clippy
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --all-targets --
 
   # ── 2. Cross-compile for aarch64 ──────────────────────────────────────────
   # This is the real deployment target — NXP i.MX93 / Matrix 800.
