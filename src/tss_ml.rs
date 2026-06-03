@@ -120,9 +120,13 @@ impl MlModel {
     /// Populated from `algo_attribute().data_len` at init; returns 1953 on non-aarch64.
     pub fn data_len(&self) -> usize {
         #[cfg(target_arch = "aarch64")]
-        { self.n_samples }
+        {
+            self.n_samples
+        }
         #[cfg(not(target_arch = "aarch64"))]
-        { 1953 }
+        {
+            1953
+        }
     }
 }
 
@@ -151,31 +155,49 @@ impl MlModel {
             }
 
             // Read algorithm attributes to determine correct input layout.
-            let (data_tab, data_len, data_dim, target_num) =
-                if let Some(attr_fn) = ops.algo_attribute {
-                    let attr_ptr = unsafe { attr_fn() };
-                    if attr_ptr.is_null() {
-                        tracing::warn!("TSS algo_attribute() returned null — assuming interleaved layout (data_tab=0)");
-                        (0u32, 1953usize, 3usize, 4u32)
-                    } else {
-                        let a = unsafe { &*attr_ptr };
-                        (a.data_tab, a.data_len as usize, a.data_dim as usize, a.target_num)
-                    }
-                } else {
-                    tracing::warn!("TSS algo_attribute fn is null — assuming interleaved layout (data_tab=0)");
+            let (data_tab, data_len, data_dim, target_num) = if let Some(attr_fn) =
+                ops.algo_attribute
+            {
+                let attr_ptr = unsafe { attr_fn() };
+                if attr_ptr.is_null() {
+                    tracing::warn!(
+                        "TSS algo_attribute() returned null — assuming interleaved layout (data_tab=0)"
+                    );
                     (0u32, 1953usize, 3usize, 4u32)
-                };
+                } else {
+                    let a = unsafe { &*attr_ptr };
+                    (
+                        a.data_tab,
+                        a.data_len as usize,
+                        a.data_dim as usize,
+                        a.target_num,
+                    )
+                }
+            } else {
+                tracing::warn!(
+                    "TSS algo_attribute fn is null — assuming interleaved layout (data_tab=0)"
+                );
+                (0u32, 1953usize, 3usize, 4u32)
+            };
 
             tracing::info!(
                 "TSS ML model ready: data_tab={} ({}), data_len={}, data_dim={}, classes={}",
                 data_tab,
-                if data_tab == 0 { "interleaved" } else { "channels-first" },
+                if data_tab == 0 {
+                    "interleaved"
+                } else {
+                    "channels-first"
+                },
                 data_len,
                 data_dim,
                 target_num,
             );
 
-            Ok(Self { ops, data_tab, n_samples: data_len })
+            Ok(Self {
+                ops,
+                data_tab,
+                n_samples: data_len,
+            })
         }
 
         #[cfg(not(target_arch = "aarch64"))]
@@ -218,9 +240,15 @@ impl MlModel {
                 }
             } else {
                 // Channels-first: [x0,…,xN, y0,…,yN, z0,…,zN]
-                for &(x, _, _) in samples { flat.push(x); }
-                for &(_, y, _) in samples { flat.push(y); }
-                for &(_, _, z) in samples { flat.push(z); }
+                for &(x, _, _) in samples {
+                    flat.push(x);
+                }
+                for &(_, y, _) in samples {
+                    flat.push(y);
+                }
+                for &(_, _, z) in samples {
+                    flat.push(z);
+                }
             }
 
             let predict = unsafe { self.ops.ops.cls_ops.predict }
@@ -229,8 +257,7 @@ impl MlModel {
             let mut probs = [0f32; 4];
             let mut class_idx: std::os::raw::c_int = -1;
 
-            let status =
-                unsafe { predict(flat.as_ptr(), probs.as_mut_ptr(), &mut class_idx) };
+            let status = unsafe { predict(flat.as_ptr(), probs.as_mut_ptr(), &mut class_idx) };
             if status != 0 {
                 return Err(anyhow::anyhow!(
                     "TSS cls_ops.predict() returned status {}",

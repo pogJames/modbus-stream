@@ -1,19 +1,19 @@
 use anyhow::Result;
 use axum::{
+    Router,
     extract::{Path as AxumPath, Query, State},
     http::StatusCode,
     response::{Html, IntoResponse, Json, Redirect, Response},
-    routing::{get, post, put, get_service},
-    Router,
+    routing::{get, get_service, post, put},
 };
 use clap::Parser;
-use minijinja::{context, Environment};
+use minijinja::{Environment, context};
 use minijinja_autoreload::AutoReloader;
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 use std::{net::SocketAddr, path::Path, sync::Arc};
 use tokio::net::TcpListener;
 use tokio::sync::broadcast;
-use std::time::Duration;
 use tokio::time::{Instant, timeout};
 use tower_http::{cors::CorsLayer, services::ServeDir};
 use tracing::{error, info, warn};
@@ -78,7 +78,11 @@ struct RecordingState {
 
 impl Default for RecordingState {
     fn default() -> Self {
-        Self { active: false, total: RECORD_TARGET, sensors: Vec::new() }
+        Self {
+            active: false,
+            total: RECORD_TARGET,
+            sensors: Vec::new(),
+        }
     }
 }
 
@@ -105,8 +109,11 @@ fn set_ftdi_latency(device: &str) {
     if let Some(name) = device.strip_prefix("/dev/") {
         let path = format!("/sys/bus/usb-serial/devices/{}/latency_timer", name);
         match std::fs::write(&path, "1") {
-            Ok(_)  => info!("FTDI latency timer → 1 ms"),
-            Err(e) => println!("  Note: could not set FTDI latency ({}) — try: echo 1 | sudo tee {}", e, path),
+            Ok(_) => info!("FTDI latency timer → 1 ms"),
+            Err(e) => println!(
+                "  Note: could not set FTDI latency ({}) — try: echo 1 | sudo tee {}",
+                e, path
+            ),
         }
     }
 }
@@ -145,7 +152,11 @@ async fn run_startup_diagnostics(
 
     // Step 2: Check read/write permissions
     print!("  [2/4] Checking permissions ...        ");
-    match std::fs::OpenOptions::new().read(true).write(true).open(device_path) {
+    match std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(device_path)
+    {
         Ok(_) => println!("OK (read + write)"),
         Err(e) => {
             println!("FAIL");
@@ -153,7 +164,10 @@ async fn run_startup_diagnostics(
             println!("         → Add yourself to dialout group:");
             println!("             sudo usermod -aG dialout $USER");
             println!("           Then log out and back in (or: newgrp dialout)");
-            println!("         → Or temporarily:  sudo chmod a+rw {}", device_path);
+            println!(
+                "         → Or temporarily:  sudo chmod a+rw {}",
+                device_path
+            );
             println!("\n  Result: PERMISSION DENIED — server starting in offline mode");
             println!("{}\n", border);
             return None;
@@ -183,10 +197,7 @@ async fn run_startup_diagnostics(
     print!("  [4/4] Testing Modbus communication ... ");
     let _ = std::io::Write::flush(&mut std::io::stdout());
     let t = Instant::now();
-    let test_result = timeout(
-        Duration::from_millis(timeout_ms),
-        client.test_connection(),
-    ).await;
+    let test_result = timeout(Duration::from_millis(timeout_ms), client.test_connection()).await;
     let elapsed = t.elapsed().as_millis();
 
     match test_result {
@@ -222,8 +233,14 @@ async fn run_startup_diagnostics(
             println!("FAIL ({} ms)", elapsed);
             println!("         ✗ {}", e);
             println!("         → Device found but not responding to Modbus queries");
-            println!("         → Verify slave ID {} matches sensor configuration", slave_id);
-            println!("         → Verify baud rate {} bps matches sensor", baud_rate);
+            println!(
+                "         → Verify slave ID {} matches sensor configuration",
+                slave_id
+            );
+            println!(
+                "         → Verify baud rate {} bps matches sensor",
+                baud_rate
+            );
             println!("         → Check sensor is powered and Modbus mode is enabled");
             println!("\n  Result: NOT RESPONDING — server starting in offline mode");
             println!("{}\n", border);
@@ -244,11 +261,17 @@ async fn run_startup_diagnostics(
             println!("           → Or try an adapter with automatic flow control (e.g. CH340)");
             println!();
             println!("         [Wrong slave ID]");
-            println!("           Config has slave ID {}. Sensor default is usually 1.", slave_id);
+            println!(
+                "           Config has slave ID {}. Sensor default is usually 1.",
+                slave_id
+            );
             println!("           → Try broadcasting: set slave_id = 0 in config.toml");
             println!();
             println!("         [Wrong baud rate]");
-            println!("           Config has {} bps. Sensor default is 115200.", baud_rate);
+            println!(
+                "           Config has {} bps. Sensor default is 115200.",
+                baud_rate
+            );
             println!("           → Verify with sensor documentation or try 9600");
             println!();
             println!("         [Wiring]");
@@ -257,7 +280,10 @@ async fn run_startup_diagnostics(
             println!();
             println!("         → Run with debug logging for raw bytes:");
             println!("           RUST_LOG=debug cargo run");
-            println!("         → Or test with mbpoll: mbpoll -a {} -b {} {} -t 3 -r 20", slave_id, baud_rate, device_path);
+            println!(
+                "         → Or test with mbpoll: mbpoll -a {} -b {} {} -t 3 -r 20",
+                slave_id, baud_rate, device_path
+            );
             println!("\n  Result: TIMED OUT — server starting in offline mode");
             println!("{}\n", border);
             None
@@ -335,7 +361,11 @@ fn list_csv_files() -> Vec<String> {
         .flatten()
         .filter_map(|e| {
             let name = e.file_name().to_string_lossy().to_string();
-            if name.to_lowercase().ends_with(".csv") { Some(name) } else { None }
+            if name.to_lowercase().ends_with(".csv") {
+                Some(name)
+            } else {
+                None
+            }
         })
         .collect();
     files.sort();
@@ -348,7 +378,9 @@ pub fn is_safe_csv_filename(name: &str) -> bool {
         && !name.contains('/')
         && !name.contains('\\')
         && name.to_lowercase().ends_with(".csv")
-        && name.chars().all(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | '.'))
+        && name
+            .chars()
+            .all(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | '.'))
 }
 
 /// GET /view/csv — redirect to the first file, or show empty state.
@@ -357,11 +389,17 @@ async fn csv_list_page(State(state): State<AppState>) -> Response {
     if let Some(first) = files.first().cloned() {
         Redirect::to(&format!("/view/csv/{}", first)).into_response()
     } else {
-        state.render_template("view_csv.html", "/view/csv", context! {
-            title => "CSV Viewer",
-            files => files,
-            current_file => "",
-        }).into_response()
+        state
+            .render_template(
+                "view_csv.html",
+                "/view/csv",
+                context! {
+                    title => "CSV Viewer",
+                    files => files,
+                    current_file => "",
+                },
+            )
+            .into_response()
     }
 }
 
@@ -371,19 +409,34 @@ async fn csv_viewer_page(
     State(state): State<AppState>,
 ) -> Response {
     if !is_safe_csv_filename(&filename) {
-        return (StatusCode::BAD_REQUEST, Html("<p>Invalid filename</p>".to_string()))
+        return (
+            StatusCode::BAD_REQUEST,
+            Html("<p>Invalid filename</p>".to_string()),
+        )
             .into_response();
     }
-    if !std::path::PathBuf::from(CSV_DATA_DIR).join(&filename).exists() {
-        return (StatusCode::NOT_FOUND, Html("<p>File not found</p>".to_string()))
+    if !std::path::PathBuf::from(CSV_DATA_DIR)
+        .join(&filename)
+        .exists()
+    {
+        return (
+            StatusCode::NOT_FOUND,
+            Html("<p>File not found</p>".to_string()),
+        )
             .into_response();
     }
     let files = list_csv_files();
-    state.render_template("view_csv.html", "/view/csv", context! {
-        title => format!("CSV — {}", filename),
-        files => files,
-        current_file => filename,
-    }).into_response()
+    state
+        .render_template(
+            "view_csv.html",
+            "/view/csv",
+            context! {
+                title => format!("CSV — {}", filename),
+                files => files,
+                current_file => filename,
+            },
+        )
+        .into_response()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -419,17 +472,28 @@ async fn main() -> Result<()> {
 
     // Resolve sensor 1 device/baud from CLI args (overrides config for sensor 1 only)
     let device1 = args.device.unwrap_or_else(|| {
-        config.sensors.first().map(|s| s.device.clone()).unwrap_or_else(|| "/dev/ttyUSB0".to_string())
+        config
+            .sensors
+            .first()
+            .map(|s| s.device.clone())
+            .unwrap_or_else(|| "/dev/ttyUSB0".to_string())
     });
     let baud1 = if args.baud_rate != 115200 {
         args.baud_rate
     } else {
-        config.sensors.first().map(|s| s.baud_rate).unwrap_or(115200)
+        config
+            .sensors
+            .first()
+            .map(|s| s.baud_rate)
+            .unwrap_or(115200)
     };
 
     // Initialize ML model (aarch64 only; logs a warning on other platforms)
     if let Err(e) = tss_ml::init_model() {
-        warn!("ML model init failed: {} — /{{}}/csv/infer will return errors", e);
+        warn!(
+            "ML model init failed: {} — /{{}}/csv/infer will return errors",
+            e
+        );
     }
 
     // Run startup diagnostics and spawn background tasks for each configured sensor
@@ -437,9 +501,17 @@ async fn main() -> Result<()> {
     let mut metrics_txs_vec: Vec<broadcast::Sender<types::WebSocketMessage>> = Vec::new();
 
     for (i, sensor_cfg) in config.sensors.iter().enumerate() {
-        let device = if i == 0 { device1.clone() } else { sensor_cfg.device.clone() };
-        let baud   = if i == 0 { baud1 } else { sensor_cfg.baud_rate };
-        let slave  = if i == 0 { args.slave_id } else { sensor_cfg.slave_id };
+        let device = if i == 0 {
+            device1.clone()
+        } else {
+            sensor_cfg.device.clone()
+        };
+        let baud = if i == 0 { baud1 } else { sensor_cfg.baud_rate };
+        let slave = if i == 0 {
+            args.slave_id
+        } else {
+            sensor_cfg.slave_id
+        };
 
         set_ftdi_latency(&device);
         let client = run_startup_diagnostics(&device, baud, slave, sensor_cfg.timeout_ms).await;
@@ -447,7 +519,11 @@ async fn main() -> Result<()> {
         let arc = Arc::new(tokio::sync::RwLock::new(client));
         let (tx, _) = broadcast::channel::<types::WebSocketMessage>(16);
 
-        spawn_metrics_tasks(arc.clone(), tx.clone(), config.streaming.metrics_update_rate_hz);
+        spawn_metrics_tasks(
+            arc.clone(),
+            tx.clone(),
+            config.streaming.metrics_update_rate_hz,
+        );
 
         modbus_arcs.push(arc);
         metrics_txs_vec.push(tx);
@@ -467,102 +543,191 @@ async fn main() -> Result<()> {
     let app = Router::new()
         // Health check
         .route("/health", get(health_check))
-        
         // Dashboard
         .route("/", get(dashboard_handler))
-        
         // Configuration routes
         .route("/config", get(routes::config::get_config))
         .route("/config/sample-rate", put(routes::config::set_sample_rate))
         .route("/config/baud-rate", put(routes::config::set_baud_rate))
-        .route("/config/high-pass-filter", put(routes::config::set_high_pass_filter))
+        .route(
+            "/config/high-pass-filter",
+            put(routes::config::set_high_pass_filter),
+        )
         .route("/config/stream-size", put(routes::config::set_stream_size))
-        
         // Read routes - System info
-        .route("/{sensor}/read/temperature", get(routes::read::get_temperature))
+        .route(
+            "/{sensor}/read/temperature",
+            get(routes::read::get_temperature),
+        )
         .route("/{sensor}/read/ucid", get(routes::read::get_ucid))
-        .route("/{sensor}/read/firmware-version", get(routes::read::get_firmware_version))
+        .route(
+            "/{sensor}/read/firmware-version",
+            get(routes::read::get_firmware_version),
+        )
         .route("/{sensor}/read/chip-id", get(routes::read::get_chip_id))
-        .route("/{sensor}/read/fifo-buffer-size", get(routes::read::get_fifo_buffer_size))
-        .route("/{sensor}/read/latest-raw", get(routes::read::get_latest_raw))
-
+        .route(
+            "/{sensor}/read/fifo-buffer-size",
+            get(routes::read::get_fifo_buffer_size),
+        )
+        .route(
+            "/{sensor}/read/latest-raw",
+            get(routes::read::get_latest_raw),
+        )
         // Read routes - Gravity metrics
-        .route("/{sensor}/read/gravity/rms", get(routes::read::get_gravity_rms))
-        .route("/{sensor}/read/gravity/peak", get(routes::read::get_gravity_peak))
-        .route("/{sensor}/read/gravity/crest-factor", get(routes::read::get_gravity_crest_factor))
-        .route("/{sensor}/read/gravity/skewness", get(routes::read::get_gravity_skewness))
-        .route("/{sensor}/read/gravity/kurtosis", get(routes::read::get_gravity_kurtosis))
-        .route("/{sensor}/read/gravity/primary-frequency", get(routes::read::get_gravity_primary_frequency))
-
+        .route(
+            "/{sensor}/read/gravity/rms",
+            get(routes::read::get_gravity_rms),
+        )
+        .route(
+            "/{sensor}/read/gravity/peak",
+            get(routes::read::get_gravity_peak),
+        )
+        .route(
+            "/{sensor}/read/gravity/crest-factor",
+            get(routes::read::get_gravity_crest_factor),
+        )
+        .route(
+            "/{sensor}/read/gravity/skewness",
+            get(routes::read::get_gravity_skewness),
+        )
+        .route(
+            "/{sensor}/read/gravity/kurtosis",
+            get(routes::read::get_gravity_kurtosis),
+        )
+        .route(
+            "/{sensor}/read/gravity/primary-frequency",
+            get(routes::read::get_gravity_primary_frequency),
+        )
         // Read routes - Velocity metrics
-        .route("/{sensor}/read/velocity/rms", get(routes::read::get_velocity_rms))
-        .route("/{sensor}/read/velocity/peak", get(routes::read::get_velocity_peak))
-        .route("/{sensor}/read/velocity/crest-factor", get(routes::read::get_velocity_crest_factor))
-        .route("/{sensor}/read/velocity/primary-frequency", get(routes::read::get_velocity_primary_frequency))
-
+        .route(
+            "/{sensor}/read/velocity/rms",
+            get(routes::read::get_velocity_rms),
+        )
+        .route(
+            "/{sensor}/read/velocity/peak",
+            get(routes::read::get_velocity_peak),
+        )
+        .route(
+            "/{sensor}/read/velocity/crest-factor",
+            get(routes::read::get_velocity_crest_factor),
+        )
+        .route(
+            "/{sensor}/read/velocity/primary-frequency",
+            get(routes::read::get_velocity_primary_frequency),
+        )
         // Read routes - Bulk
-        .route("/{sensor}/read/all-metrics", get(routes::read::get_all_metrics))
-        .route("/read/latest-raw", get(routes::read::get_latest_raw_combined))
-
+        .route(
+            "/{sensor}/read/all-metrics",
+            get(routes::read::get_all_metrics),
+        )
+        .route(
+            "/read/latest-raw",
+            get(routes::read::get_latest_raw_combined),
+        )
         // Stream routes
-        .route("/{sensor}/stream/raw", get(routes::stream::websocket_raw_handler))
-        .route("/{sensor}/stream/metrics", get(routes::stream::websocket_metrics_handler))
+        .route(
+            "/{sensor}/stream/raw",
+            get(routes::stream::websocket_raw_handler),
+        )
+        .route(
+            "/{sensor}/stream/metrics",
+            get(routes::stream::websocket_metrics_handler),
+        )
         .route("/{sensor}/stream/start", post(routes::stream::start_stream))
         .route("/{sensor}/stream/stop", post(routes::stream::stop_stream))
-        .route("/{sensor}/stream/status", get(routes::stream::get_stream_status))
-
+        .route(
+            "/{sensor}/stream/status",
+            get(routes::stream::get_stream_status),
+        )
         // Settings routes
         .route("/settings", get(routes::settings::settings_page_handler))
-        .route("/settings/apply", post(routes::settings::apply_settings_handler))
-        .route("/settings/test", post(routes::settings::test_connection_handler))
-        .route("/settings/status", get(routes::settings::get_status_handler))
-        .route("/settings/reset", post(routes::settings::reset_settings_handler))
-        .route("/settings/ports", get(routes::settings::get_available_ports))
-        .route("/settings/validate", post(routes::settings::validate_field_handler))
-        
+        .route(
+            "/settings/apply",
+            post(routes::settings::apply_settings_handler),
+        )
+        .route(
+            "/settings/test",
+            post(routes::settings::test_connection_handler),
+        )
+        .route(
+            "/settings/status",
+            get(routes::settings::get_status_handler),
+        )
+        .route(
+            "/settings/reset",
+            post(routes::settings::reset_settings_handler),
+        )
+        .route(
+            "/settings/ports",
+            get(routes::settings::get_available_ports),
+        )
+        .route(
+            "/settings/validate",
+            post(routes::settings::validate_field_handler),
+        )
         // View pages (charts + data)
         .route("/view/raw", get(routes::view::raw_stream_page))
-        .route("/{sensor}/view/raw", get(routes::view::raw_stream_page_sensor))
+        .route(
+            "/{sensor}/view/raw",
+            get(routes::view::raw_stream_page_sensor),
+        )
         .route("/view/metrics", get(routes::view::metrics_stream_page))
-        .route("/{sensor}/view/metrics", get(routes::view::metrics_stream_page_sensor))
+        .route(
+            "/{sensor}/view/metrics",
+            get(routes::view::metrics_stream_page_sensor),
+        )
         .route("/view/latest-raw", get(routes::view::latest_raw_page))
         .route("/view/all-metrics", get(routes::view::all_metrics_page))
-        .route("/{sensor}/view/all-metrics", get(routes::view::all_metrics_page_sensor))
-        .route("/view/health", get(|| async { Redirect::permanent("/health") }))
+        .route(
+            "/{sensor}/view/all-metrics",
+            get(routes::view::all_metrics_page_sensor),
+        )
+        .route(
+            "/view/health",
+            get(|| async { Redirect::permanent("/health") }),
+        )
         .route("/view/diagnostics", get(routes::view::diagnostics_page))
-
         // Recording
         .route("/api/record/start", post(record_start_handler))
         .route("/api/record/status", get(record_status_handler))
-
         // CSV viewer + ML inference
         .route("/view/csv", get(csv_list_page))
         .route("/view/csv/{filename}", get(csv_viewer_page))
         .route("/{sensor}/csv/infer", post(routes::read::infer_csv))
-
         // Static files and diagnostics
         .route("/diagnostics", get(routes::diagnostics::get_diagnostics))
-        .nest_service("/static", get_service(ServeDir::new("static")).handle_error(|e| async move {
-            (StatusCode::INTERNAL_SERVER_ERROR, format!("Error serving static file: {}", e))
-        }))
-        .nest_service("/data", get_service(ServeDir::new("data")).handle_error(|e| async move {
-            (StatusCode::INTERNAL_SERVER_ERROR, format!("Error serving data file: {}", e))
-        }))
-        
+        .nest_service(
+            "/static",
+            get_service(ServeDir::new("static")).handle_error(|e| async move {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Error serving static file: {}", e),
+                )
+            }),
+        )
+        .nest_service(
+            "/data",
+            get_service(ServeDir::new("data")).handle_error(|e| async move {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Error serving data file: {}", e),
+                )
+            }),
+        )
         .layer(CorsLayer::permissive())
         .with_state(state);
 
     // Parse bind address
     let addr: SocketAddr = args.bind.parse()?;
     let listener = TcpListener::bind(addr).await?;
-    
+
     info!("Starting server on {}", addr);
     info!("API Documentation:");
     info!("  Health: GET /health");
     info!("  Config: GET/PUT /config/*");
     info!("  Read:   GET /read/*");
     info!("  Stream: WS /stream/raw, /stream/metrics");
-    
+
     axum::serve(listener, app).await?;
 
     Ok(())
@@ -677,8 +842,14 @@ async fn run_recording_sensor(
         let guard = modbus_client.read().await;
         if let Some(client) = &*guard {
             match client.set_sample_rate(7812).await {
-                Ok(()) => info!("[Sensor {}] Sample rate re-initialized (7812 Hz) — FIFO should be reset", sensor_n),
-                Err(e) => warn!("[Sensor {}] Sample rate write failed (continuing anyway): {}", sensor_n, e),
+                Ok(()) => info!(
+                    "[Sensor {}] Sample rate re-initialized (7812 Hz) — FIFO should be reset",
+                    sensor_n
+                ),
+                Err(e) => warn!(
+                    "[Sensor {}] Sample rate write failed (continuing anyway): {}",
+                    sensor_n, e
+                ),
             }
         }
     }
@@ -690,7 +861,7 @@ async fn run_recording_sensor(
     // Diagnostic counters
     let mut total_errors: u64 = 0;
     let mut consecutive_errors: u32 = 0;
-    let mut empty_cycles: u64 = 0;   // cycles where FIFO had <= 6 registers
+    let mut empty_cycles: u64 = 0; // cycles where FIFO had <= 6 registers
     let mut last_log_n: u64 = 0;
     let mut last_log_time = tokio::time::Instant::now();
     let mut last_progress_time = tokio::time::Instant::now();
@@ -711,8 +882,12 @@ async fn run_recording_sensor(
                  (at {}/{}, next_count={}, consecutive_errors={}, total_errors={}, empty_cycles={})",
                 sensor_n,
                 last_progress_time.elapsed().as_secs_f64(),
-                buf.len(), RECORD_TARGET,
-                next_count, consecutive_errors, total_errors, empty_cycles
+                buf.len(),
+                RECORD_TARGET,
+                next_count,
+                consecutive_errors,
+                total_errors,
+                empty_cycles
             );
             // Reset timer so we warn again in another 5 s, not every loop
             last_progress_time = tokio::time::Instant::now();
@@ -724,7 +899,11 @@ async fn run_recording_sensor(
             Some(c) => c,
             None => {
                 drop(guard);
-                error!("[Sensor {}] Disconnected mid-recording after {} samples", sensor_n, buf.len());
+                error!(
+                    "[Sensor {}] Disconnected mid-recording after {} samples",
+                    sensor_n,
+                    buf.len()
+                );
                 let mut rec = recording.lock().await;
                 rec.sensors[idx].active = false;
                 rec.sensors[idx].error = Some("Sensor disconnected during recording".to_string());
@@ -736,19 +915,17 @@ async fn run_recording_sensor(
         let t_read = tokio::time::Instant::now();
         let result: anyhow::Result<(u16, Vec<types::AccelerationData>)> = if next_count <= 6 {
             empty_cycles += 1;
-            match tokio::time::timeout(
-                Duration::from_millis(100),
-                client.read_fifo_buffer_size(),
-            ).await {
+            match tokio::time::timeout(Duration::from_millis(100), client.read_fifo_buffer_size())
+                .await
+            {
                 Ok(r) => r.map(|sz| (sz, vec![])),
                 Err(_) => Err(anyhow::anyhow!("Modbus read timed out after 100ms")),
             }
         } else {
             let count = fifo_read_count(next_count);
-            match tokio::time::timeout(
-                Duration::from_millis(100),
-                client.read_fifo_combined(count),
-            ).await {
+            match tokio::time::timeout(Duration::from_millis(100), client.read_fifo_combined(count))
+                .await
+            {
                 Ok(r) => r,
                 Err(_) => Err(anyhow::anyhow!("Modbus read timed out after 100ms")),
             }
@@ -784,17 +961,23 @@ async fn run_recording_sensor(
                 }
 
                 // Rate log every 1000 samples or every 10 s, whichever comes first
-                if n / 1000 > last_log_n / 1000 || last_log_time.elapsed() > Duration::from_secs(10) {
+                if n / 1000 > last_log_n / 1000 || last_log_time.elapsed() > Duration::from_secs(10)
+                {
                     let secs = last_log_time.elapsed().as_secs_f64().max(0.001);
                     let rate = (n - last_log_n) as f64 / secs;
                     info!(
                         "[Sensor {}] {}/{} ({:.0}%) — {:.0} sps, \
                          last_read={}ms, next_count={}, \
                          total_errors={}, empty_cycles={}",
-                        sensor_n, n, RECORD_TARGET,
+                        sensor_n,
+                        n,
+                        RECORD_TARGET,
                         n as f64 / RECORD_TARGET as f64 * 100.0,
-                        rate, read_ms, next_count,
-                        total_errors, empty_cycles
+                        rate,
+                        read_ms,
+                        next_count,
+                        total_errors,
+                        empty_cycles
                     );
                     last_log_n = n;
                     last_log_time = tokio::time::Instant::now();
@@ -809,8 +992,7 @@ async fn run_recording_sensor(
                 warn!(
                     "[Sensor {}] read error #{} (consecutive={}, read_ms={}, \
                      next_count_was={}): {}",
-                    sensor_n, total_errors, consecutive_errors,
-                    read_ms, prev_next_count, e
+                    sensor_n, total_errors, consecutive_errors, read_ms, prev_next_count, e
                 );
 
                 tokio::time::sleep(Duration::from_millis(100)).await;
@@ -836,11 +1018,11 @@ async fn run_recording_sensor(
     let path = format!("{}/{}", CSV_DATA_DIR, filename);
 
     let write_result = tokio::task::spawn_blocking(move || -> std::io::Result<u64> {
-        use std::io::Write;
         use rubato::{
             Resampler, SincFixedIn, SincInterpolationParameters, SincInterpolationType,
             WindowFunction,
         };
+        use std::io::Write;
 
         // ── Resample to uniform 7812 Hz grid ─────────────────────────────
         let n_in = buf.len();
@@ -915,7 +1097,11 @@ async fn run_recording_sensor(
 
         tracing::info!(
             "[Sensor {}] Resampled {} → {} samples  ratio={:.6}  delay={}",
-            sensor_n, n_in, target, ratio, delay
+            sensor_n,
+            n_in,
+            target,
+            ratio,
+            delay
         );
 
         // ── Write CSV ─────────────────────────────────────────────────────
@@ -962,10 +1148,14 @@ async fn health_check() -> impl IntoResponse {
 }
 
 async fn dashboard_handler(State(state): State<AppState>) -> impl IntoResponse {
-    state.render_template("dashboard.html", "/", context! {
-        title => "Modbus Stream Dashboard",
-        version => env!("CARGO_PKG_VERSION")
-    })
+    state.render_template(
+        "dashboard.html",
+        "/",
+        context! {
+            title => "Modbus Stream Dashboard",
+            version => env!("CARGO_PKG_VERSION")
+        },
+    )
 }
 
 // Helper function to generate URLs in templates
@@ -979,13 +1169,13 @@ fn url_for(name: &str, _args: Vec<minijinja::Value>) -> Result<minijinja::Value,
         "reset_settings" => Ok(minijinja::Value::from("/settings/reset")),
         "get_ports" => Ok(minijinja::Value::from("/settings/ports")),
         "validate_settings" => Ok(minijinja::Value::from("/settings/validate")),
-        "diagnostics"   => Ok(minijinja::Value::from("/diagnostics")),
-        "view_raw"        => Ok(minijinja::Value::from("/view/raw")),
-        "view_metrics"    => Ok(minijinja::Value::from("/view/metrics")),
-        "view_latest_raw"   => Ok(minijinja::Value::from("/view/latest-raw")),
-        "view_all_metrics"  => Ok(minijinja::Value::from("/view/all-metrics")),
-        "view_diagnostics"  => Ok(minijinja::Value::from("/view/diagnostics")),
-        "view_csv"          => Ok(minijinja::Value::from("/view/csv")),
+        "diagnostics" => Ok(minijinja::Value::from("/diagnostics")),
+        "view_raw" => Ok(minijinja::Value::from("/view/raw")),
+        "view_metrics" => Ok(minijinja::Value::from("/view/metrics")),
+        "view_latest_raw" => Ok(minijinja::Value::from("/view/latest-raw")),
+        "view_all_metrics" => Ok(minijinja::Value::from("/view/all-metrics")),
+        "view_diagnostics" => Ok(minijinja::Value::from("/view/diagnostics")),
+        "view_csv" => Ok(minijinja::Value::from("/view/csv")),
         _ => Err(minijinja::Error::new(
             minijinja::ErrorKind::InvalidOperation,
             format!("unknown route: {}", name),
@@ -995,33 +1185,46 @@ fn url_for(name: &str, _args: Vec<minijinja::Value>) -> Result<minijinja::Value,
 
 // Template rendering helpers for AppState
 impl AppState {
-    pub fn render_template(&self, template_name: &str, _path: &str, context: minijinja::Value) -> Html<String> {
+    pub fn render_template(
+        &self,
+        template_name: &str,
+        _path: &str,
+        context: minijinja::Value,
+    ) -> Html<String> {
         match self.template_env.acquire_env() {
-            Ok(env) => {
-                match env.get_template(template_name) {
-                    Ok(template) => {
-                        match template.render(context) {
-                            Ok(rendered) => Html(rendered),
-                            Err(e) => {
-                                tracing::error!("Template render error: {}", e);
-                                Html(format!("<div class='error'>Template render error: {}</div>", e))
-                            }
-                        }
-                    }
+            Ok(env) => match env.get_template(template_name) {
+                Ok(template) => match template.render(context) {
+                    Ok(rendered) => Html(rendered),
                     Err(e) => {
-                        tracing::error!("Template not found: {} - {}", template_name, e);
-                        Html(format!("<div class='error'>Template not found: {}</div>", template_name))
+                        tracing::error!("Template render error: {}", e);
+                        Html(format!(
+                            "<div class='error'>Template render error: {}</div>",
+                            e
+                        ))
                     }
+                },
+                Err(e) => {
+                    tracing::error!("Template not found: {} - {}", template_name, e);
+                    Html(format!(
+                        "<div class='error'>Template not found: {}</div>",
+                        template_name
+                    ))
                 }
-            }
+            },
             Err(e) => {
                 tracing::error!("Template environment error: {}", e);
-                Html(format!("<div class='error'>Template environment error</div>"))
+                Html(format!(
+                    "<div class='error'>Template environment error</div>"
+                ))
             }
         }
     }
-    
-    pub fn render_template_fragment(&self, template_name: &str, context: minijinja::Value) -> Html<String> {
+
+    pub fn render_template_fragment(
+        &self,
+        template_name: &str,
+        context: minijinja::Value,
+    ) -> Html<String> {
         self.render_template(template_name, "", context)
     }
 }
@@ -1063,8 +1266,8 @@ mod recording_tests {
 
     #[test]
     fn count_representative_values() {
-        assert_eq!(fifo_read_count(7), 6);    // was 7 before fix (misaligned)
-        assert_eq!(fifo_read_count(100), 99);  // was 100 before fix
+        assert_eq!(fifo_read_count(7), 6); // was 7 before fix (misaligned)
+        assert_eq!(fifo_read_count(100), 99); // was 100 before fix
         assert_eq!(fifo_read_count(122), 120); // was 122 before fix
         assert_eq!(fifo_read_count(123), 123); // exact multiple — unchanged
         assert_eq!(fifo_read_count(200), 123); // capped at 123
@@ -1089,7 +1292,9 @@ mod recording_tests {
 
     impl MockFifo {
         fn new() -> Self {
-            Self { responses: VecDeque::new() }
+            Self {
+                responses: VecDeque::new(),
+            }
         }
         /// Enqueue: next read returns `size_after` as new FIFO size, `n_samples` samples.
         fn push_data(&mut self, size_after: u16, n_samples: u16) {
@@ -1106,9 +1311,9 @@ mod recording_tests {
         }
         fn pop(&mut self) -> anyhow::Result<(u16, Vec<types::AccelerationData>)> {
             match self.responses.pop_front() {
-                Some(Ok(r))  => Ok(r),
+                Some(Ok(r)) => Ok(r),
                 Some(Err(e)) => Err(anyhow::anyhow!("{}", e)),
-                None         => Err(anyhow::anyhow!("mock exhausted")),
+                None => Err(anyhow::anyhow!("mock exhausted")),
             }
         }
     }
@@ -1127,7 +1332,9 @@ mod recording_tests {
         let mut empty_cycles: u64 = 0;
 
         loop {
-            if buf.len() >= target { break; }
+            if buf.len() >= target {
+                break;
+            }
 
             let result: anyhow::Result<(u16, Vec<types::AccelerationData>)> = {
                 let mut f = fifo.lock().unwrap();
@@ -1152,9 +1359,13 @@ mod recording_tests {
                 Ok((new_size, data)) => {
                     consecutive_errors = 0;
                     next_count = new_size;
-                    if data.is_empty() { continue; }
+                    if data.is_empty() {
+                        continue;
+                    }
                     for s in data {
-                        if buf.len() >= target { break; }
+                        if buf.len() >= target {
+                            break;
+                        }
                         buf.push(s);
                     }
                 }
@@ -1181,9 +1392,9 @@ mod recording_tests {
         let fifo = Arc::new(StdMutex::new(MockFifo::new()));
         {
             let mut mf = fifo.lock().unwrap();
-            mf.push_size(30);           // initial: next_count=0 ≤ 6 → size-only → next_count=30
+            mf.push_size(30); // initial: next_count=0 ≤ 6 → size-only → next_count=30
             for _ in 0..40 {
-                mf.push_data(30, 10);   // next_count=30 → count=30 → 10 samples, size stays 30
+                mf.push_data(30, 10); // next_count=30 → count=30 → 10 samples, size stays 30
             }
         }
         let (collected, errors, _) = run_mock_collection(fifo, 100, 50).await;
@@ -1221,12 +1432,15 @@ mod recording_tests {
             for _ in 0..200 {
                 mf.push_data(30, 10); // ok
                 mf.push_data(30, 10); // ok
-                mf.push_error();       // transient error
-                mf.push_size(30);     // size refresh after error+reset
+                mf.push_error(); // transient error
+                mf.push_size(30); // size refresh after error+reset
             }
         }
         let (collected, errors, _) = run_mock_collection(fifo, 100, 50).await;
-        assert_eq!(collected, 100, "recording should still complete despite errors");
+        assert_eq!(
+            collected, 100,
+            "recording should still complete despite errors"
+        );
         assert!(errors > 0, "should have seen some errors");
     }
 
@@ -1254,10 +1468,10 @@ mod recording_tests {
         let fifo = Arc::new(StdMutex::new(MockFifo::new()));
         {
             let mut mf = fifo.lock().unwrap();
-            mf.push_size(100);       // first: size-only (next_count=0 ≤ 6)
-            mf.push_data(1, 33);     // next_count=100 → count=99 → 33 samples; new_size=1
-            mf.push_size(60);        // next_count=1 ≤ 6 → size-only; orphan never read
-            mf.push_data(60, 20);    // now reading properly aligned again
+            mf.push_size(100); // first: size-only (next_count=0 ≤ 6)
+            mf.push_data(1, 33); // next_count=100 → count=99 → 33 samples; new_size=1
+            mf.push_size(60); // next_count=1 ≤ 6 → size-only; orphan never read
+            mf.push_data(60, 20); // now reading properly aligned again
             mf.push_data(60, 20);
             mf.push_data(60, 20);
             mf.push_data(60, 20);

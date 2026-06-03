@@ -1,0 +1,92 @@
+# .github/workflows/ci.yml
+#
+# CI pipeline for modbus-stream
+# Runs on every push and pull request to main.
+#
+# Jobs:
+#   check          — fast cargo check + clippy + fmt on x86 Ubuntu
+#   build-aarch64  — cross-compile release binary for NXP i.MX93 / Matrix 800
+#                    (this is the real deployment target)
+#
+# The build.rs only links libtss_svm.a when target_arch=aarch64, so x86
+# check/clippy runs cleanly without the proprietary NXP static library.
+# Cross-compile uses gcc-aarch64-linux-gnu as documented in README.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+
+  # ── 1. Fast checks on x86 ─────────────────────────────────────────────────
+  # cargo check is ~5× faster than full build. clippy catches real bugs.
+  # fmt enforces consistent style. None of these need aarch64 linking.
+  check:
+    name: Check, clippy, fmt
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache cargo registry and target
+        uses: Swatinem/rust-cache@v2
+
+      - name: cargo fmt --check
+        run: cargo fmt --all -- --check
+
+      - name: cargo check
+        run: cargo check --all-targets
+
+      - name: cargo clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+  # ── 2. Cross-compile for aarch64 ──────────────────────────────────────────
+  # This is the real deployment target — NXP i.MX93 / Matrix 800.
+  # Links libtss_svm.a from lib/ via build.rs. The .cargo/config.toml in
+  # the repo already sets linker=aarch64-linux-gnu-gcc and target-cpu=cortex-a55.
+  build-aarch64:
+    name: Build aarch64 (Matrix 800)
+    runs-on: ubuntu-latest
+    needs: check
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain with aarch64 target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-gnu
+
+      - name: Install cross-compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Cache cargo registry and target
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: aarch64
+
+      - name: Build release binary
+        run: cargo build --release --target aarch64-unknown-linux-gnu
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: modbus-stream-aarch64
+          path: target/aarch64-unknown-linux-gnu/release/modbus-stream
+          retention-days: 14

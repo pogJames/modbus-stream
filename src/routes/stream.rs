@@ -1,20 +1,23 @@
+use anyhow::Result;
 use axum::{
-    extract::{Path, State, WebSocketUpgrade, ws::{Message, WebSocket}},
+    extract::{
+        Path, State, WebSocketUpgrade,
+        ws::{Message, WebSocket},
+    },
     http::StatusCode,
     response::{IntoResponse, Json},
 };
+use chrono::Utc;
 use futures::{sink::SinkExt, stream::StreamExt};
 use rustfft::{FftPlanner, num_complex::Complex};
 use std::{f32::consts::PI, sync::Arc, time::Duration};
 use tokio::sync::broadcast;
 use tracing::{error, info, warn};
-use anyhow::Result;
-use chrono::Utc;
 
 const FFT_WINDOW: usize = 4096;
 const SAMPLE_RATE_HZ: f32 = 7812.0;
 const FFT_BIN_START: usize = 2;
-const FFT_BIN_END:   usize = 262;
+const FFT_BIN_END: usize = 262;
 
 /// Apply a Hann window in-place to reduce spectral leakage.
 fn apply_hann(buf: &mut [f32]) {
@@ -29,7 +32,10 @@ fn apply_hann(buf: &mut [f32]) {
 /// Values are peak-amplitude scaled (2/N for non-DC bins).
 fn fft_magnitudes(samples: &[f32]) -> Vec<f32> {
     let n = samples.len();
-    let mut buf: Vec<Complex<f32>> = samples.iter().map(|&s| Complex { re: s, im: 0.0 }).collect();
+    let mut buf: Vec<Complex<f32>> = samples
+        .iter()
+        .map(|&s| Complex { re: s, im: 0.0 })
+        .collect();
     let mut planner = FftPlanner::new();
     planner.plan_fft_forward(n).process(&mut buf);
     let inv_n = 1.0 / n as f32;
@@ -47,9 +53,9 @@ fn freq_bins(n: usize, sample_rate: f32) -> Vec<f32> {
 }
 
 use crate::{
+    AppState,
     modbus::ModbusClient,
     types::{ErrorResponse, StreamStartRequest, StreamStatus, StreamType, WebSocketMessage},
-    AppState,
 };
 
 // StreamManager implementation inlined
@@ -70,10 +76,7 @@ impl StreamManager {
     /// - `RawData` (downsampled, mid + last of each batch) for the time-domain plot.
     /// - `FftData` whenever the internal accumulation buffer fills `FFT_WINDOW` samples,
     ///   computed from the full-rate data before downsampling.
-    async fn start_raw_streaming(
-        &self,
-        tx: broadcast::Sender<WebSocketMessage>,
-    ) -> Result<()> {
+    async fn start_raw_streaming(&self, tx: broadcast::Sender<WebSocketMessage>) -> Result<()> {
         info!("Starting raw data streaming");
 
         let mut sequence = 0u64;
@@ -158,7 +161,11 @@ impl StreamManager {
                     // --- Downsample: keep middle + last sample per Modbus packet ---
                     let mid = data[data.len() / 2].clone();
                     let last = data[data.len() - 1].clone();
-                    let downsampled = if data.len() == 1 { vec![mid] } else { vec![mid, last] };
+                    let downsampled = if data.len() == 1 {
+                        vec![mid]
+                    } else {
+                        vec![mid, last]
+                    };
 
                     let message = WebSocketMessage::RawData {
                         timestamp: Utc::now(),
@@ -187,7 +194,6 @@ impl StreamManager {
         info!("Raw data streaming stopped");
         Ok(())
     }
-
 }
 
 /// WebSocket handler for raw data streaming
@@ -200,11 +206,15 @@ pub async fn websocket_raw_handler(
     let client = match state.modbus_clients.get(idx) {
         Some(c) => c.clone(),
         None => {
-            return (StatusCode::NOT_FOUND, Json(ErrorResponse {
-                error: format!("Unknown sensor: {}", sensor),
-                code: Some("UNKNOWN_SENSOR".to_string()),
-                timestamp: chrono::Utc::now(),
-            })).into_response();
+            return (
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: format!("Unknown sensor: {}", sensor),
+                    code: Some("UNKNOWN_SENSOR".to_string()),
+                    timestamp: chrono::Utc::now(),
+                }),
+            )
+                .into_response();
         }
     };
     ws.on_upgrade(|socket| handle_raw_websocket(socket, client))
@@ -220,11 +230,15 @@ pub async fn websocket_metrics_handler(
     let rx = match state.metrics_txs.get(idx) {
         Some(tx) => tx.subscribe(),
         None => {
-            return (StatusCode::NOT_FOUND, Json(ErrorResponse {
-                error: format!("Unknown sensor: {}", sensor),
-                code: Some("UNKNOWN_SENSOR".to_string()),
-                timestamp: chrono::Utc::now(),
-            })).into_response();
+            return (
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: format!("Unknown sensor: {}", sensor),
+                    code: Some("UNKNOWN_SENSOR".to_string()),
+                    timestamp: chrono::Utc::now(),
+                }),
+            )
+                .into_response();
         }
     };
     ws.on_upgrade(|socket| handle_metrics_websocket(socket, rx))
@@ -240,11 +254,15 @@ pub async fn start_stream(
     let baud_rate = match state.config.sensors.get(idx) {
         Some(s) => s.baud_rate,
         None => {
-            return (StatusCode::NOT_FOUND, Json(ErrorResponse {
-                error: format!("Unknown sensor: {}", sensor),
-                code: Some("UNKNOWN_SENSOR".to_string()),
-                timestamp: chrono::Utc::now(),
-            })).into_response();
+            return (
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    error: format!("Unknown sensor: {}", sensor),
+                    code: Some("UNKNOWN_SENSOR".to_string()),
+                    timestamp: chrono::Utc::now(),
+                }),
+            )
+                .into_response();
         }
     };
 
@@ -312,7 +330,10 @@ pub async fn get_stream_status(
 }
 
 /// Handle raw data WebSocket connection
-async fn handle_raw_websocket(mut socket: WebSocket, client: Arc<tokio::sync::RwLock<Option<ModbusClient>>>) {
+async fn handle_raw_websocket(
+    mut socket: WebSocket,
+    client: Arc<tokio::sync::RwLock<Option<ModbusClient>>>,
+) {
     info!("New raw data WebSocket connection");
 
     // Send initial status
@@ -327,7 +348,11 @@ async fn handle_raw_websocket(mut socket: WebSocket, client: Arc<tokio::sync::Rw
         }
     };
 
-    if socket.send(Message::Text(status_message.into())).await.is_err() {
+    if socket
+        .send(Message::Text(status_message.into()))
+        .await
+        .is_err()
+    {
         error!("Failed to send initial status");
         return;
     }
@@ -419,7 +444,10 @@ async fn handle_raw_websocket(mut socket: WebSocket, client: Arc<tokio::sync::Rw
 }
 
 /// Handle metrics WebSocket connection — subscribes to the shared background reader in AppState.
-async fn handle_metrics_websocket(mut socket: WebSocket, mut rx: broadcast::Receiver<WebSocketMessage>) {
+async fn handle_metrics_websocket(
+    mut socket: WebSocket,
+    mut rx: broadcast::Receiver<WebSocketMessage>,
+) {
     info!("New metrics WebSocket connection");
 
     let status_message = match serde_json::to_string(&WebSocketMessage::Status {
@@ -433,7 +461,11 @@ async fn handle_metrics_websocket(mut socket: WebSocket, mut rx: broadcast::Rece
         }
     };
 
-    if socket.send(Message::Text(status_message.into())).await.is_err() {
+    if socket
+        .send(Message::Text(status_message.into()))
+        .await
+        .is_err()
+    {
         return;
     }
 

@@ -2,15 +2,13 @@ use axum::{
     extract::State,
     response::{IntoResponse, Json},
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::{modbus::ModbusClient, AppState};
+use crate::{AppState, modbus::ModbusClient};
 
-async fn read_sensor_data(
-    client_arc: &Arc<RwLock<Option<ModbusClient>>>,
-) -> (Value, Value) {
+async fn read_sensor_data(client_arc: &Arc<RwLock<Option<ModbusClient>>>) -> (Value, Value) {
     let guard = client_arc.read().await;
     let connected = match &*guard {
         Some(client) => client.test_connection().await.is_ok(),
@@ -30,20 +28,30 @@ async fn read_sensor_data(
             let mut info = json!({});
 
             match client.read_temperature().await {
-                Ok(temp) => info["temperature"] = json!({ "value": temp, "unit": "°C", "status": "ok" }),
-                Err(e)   => info["temperature"] = json!({ "status": "error", "error": e.to_string() }),
+                Ok(temp) => {
+                    info["temperature"] = json!({ "value": temp, "unit": "°C", "status": "ok" })
+                }
+                Err(e) => {
+                    info["temperature"] = json!({ "status": "error", "error": e.to_string() })
+                }
             }
             match client.read_ucid().await {
-                Ok(ucid) => info["ucid"] = json!({ "model": ucid.model, "gain": ucid.gain, "serialNumber": ucid.serial_number, "status": "ok" }),
-                Err(e)   => info["ucid"] = json!({ "status": "error", "error": e.to_string() }),
+                Ok(ucid) => {
+                    info["ucid"] = json!({ "model": ucid.model, "gain": ucid.gain, "serialNumber": ucid.serial_number, "status": "ok" })
+                }
+                Err(e) => info["ucid"] = json!({ "status": "error", "error": e.to_string() }),
             }
             match client.read_firmware_version().await {
-                Ok(v)  => info["firmwareVersion"] = json!({ "value": v, "status": "ok" }),
-                Err(e) => info["firmwareVersion"] = json!({ "status": "error", "error": e.to_string() }),
+                Ok(v) => info["firmwareVersion"] = json!({ "value": v, "status": "ok" }),
+                Err(e) => {
+                    info["firmwareVersion"] = json!({ "status": "error", "error": e.to_string() })
+                }
             }
             match client.read_fifo_buffer_size().await {
                 Ok(sz) => info["fifoBufferSize"] = json!({ "value": sz, "status": "ok" }),
-                Err(e) => info["fifoBufferSize"] = json!({ "status": "error", "error": e.to_string() }),
+                Err(e) => {
+                    info["fifoBufferSize"] = json!({ "status": "error", "error": e.to_string() })
+                }
             }
             info
         } else {
@@ -58,7 +66,14 @@ async fn read_sensor_data(
 
 /// Get system diagnostics and sensor status
 pub async fn get_diagnostics(State(state): State<AppState>) -> impl IntoResponse {
-    let streaming_capable = if state.config.sensors.first().map(|s| s.baud_rate).unwrap_or(0) >= 3000000 {
+    let streaming_capable = if state
+        .config
+        .sensors
+        .first()
+        .map(|s| s.baud_rate)
+        .unwrap_or(0)
+        >= 3000000
+    {
         "full"
     } else {
         "metrics-only"
@@ -71,11 +86,14 @@ pub async fn get_diagnostics(State(state): State<AppState>) -> impl IntoResponse
 
     for (i, cfg) in state.config.sensors.iter().enumerate() {
         let key = format!("sensor{}", i + 1);
-        sensor_configs.insert(format!("config{}", i + 1), json!({
-            "device": cfg.device,
-            "baudRate": cfg.baud_rate,
-            "slaveId": cfg.slave_id,
-        }));
+        sensor_configs.insert(
+            format!("config{}", i + 1),
+            json!({
+                "device": cfg.device,
+                "baudRate": cfg.baud_rate,
+                "slaveId": cfg.slave_id,
+            }),
+        );
         if let Some(client_arc) = state.modbus_clients.get(i) {
             let (conn, sensor) = read_sensor_data(client_arc).await;
             sensor_connections.insert(format!("connection{}", i + 1), conn);
@@ -105,9 +123,15 @@ pub async fn get_diagnostics(State(state): State<AppState>) -> impl IntoResponse
 
     // Merge sensor configs, connections, and data into top-level object
     if let Some(obj) = diagnostics.as_object_mut() {
-        for (k, v) in sensor_configs { obj.insert(k, v); }
-        for (k, v) in sensor_connections { obj.insert(k, v); }
-        for (k, v) in sensor_data_map { obj.insert(k, v); }
+        for (k, v) in sensor_configs {
+            obj.insert(k, v);
+        }
+        for (k, v) in sensor_connections {
+            obj.insert(k, v);
+        }
+        for (k, v) in sensor_data_map {
+            obj.insert(k, v);
+        }
     }
 
     Json(diagnostics).into_response()

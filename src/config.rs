@@ -120,7 +120,8 @@ impl AppConfig {
             if ![115200, 3000000].contains(&sensor.baud_rate) {
                 tracing::warn!(
                     "Unusual baud rate {} for {}. Sensor supports 115200 or 3000000 bps",
-                    sensor.baud_rate, label
+                    sensor.baud_rate,
+                    label
                 );
             }
         }
@@ -170,7 +171,8 @@ websocket_ping_interval_sec = 30
 [logging]
 level = "info"
 format = "pretty"
-"#.to_string()
+"#
+        .to_string()
     })
 }
 
@@ -189,22 +191,25 @@ mod tests {
     fn test_config_save_load() {
         let temp_file = NamedTempFile::new().unwrap();
         let config = AppConfig::default();
-        
+
         config.save(temp_file.path()).unwrap();
         let loaded_config = AppConfig::load(temp_file.path()).unwrap();
-        
+
         assert_eq!(config.server.port, loaded_config.server.port);
-        assert_eq!(config.sensors[0].slave_id, loaded_config.sensors[0].slave_id);
+        assert_eq!(
+            config.sensors[0].slave_id,
+            loaded_config.sensors[0].slave_id
+        );
     }
 
     #[test]
     fn test_config_validation() {
         let mut config = AppConfig::default();
-        
+
         // Test invalid port
         config.server.port = 0;
         assert!(config.validate().is_err());
-        
+
         // Test invalid slave ID
         config.server.port = 3000;
         config.sensors[0].slave_id = 0;

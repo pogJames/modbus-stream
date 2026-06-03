@@ -6,11 +6,11 @@ use axum::{
 use tracing::{error, info};
 
 use crate::{
+    AppState,
     types::{
         BaudRateRequest, ConfigResponse, ErrorResponse, HighPassFilterRequest, SampleRateRequest,
         StreamSizeRequest,
     },
-    AppState,
 };
 
 /// Helper to handle when device is not connected
@@ -29,7 +29,9 @@ async fn handle_no_device() -> impl IntoResponse {
 pub async fn get_config(State(state): State<AppState>) -> impl IntoResponse {
     match read_current_config(&state).await {
         Ok(config) => Json(config).into_response(),
-        Err(e) if e.to_string().contains("not connected") => handle_no_device().await.into_response(),
+        Err(e) if e.to_string().contains("not connected") => {
+            handle_no_device().await.into_response()
+        }
         Err(e) => {
             error!("Failed to read configuration: {}", e);
             (
@@ -55,30 +57,32 @@ pub async fn set_sample_rate(
         None => return handle_no_device().await.into_response(),
     };
     match &*client_guard {
-        Some(client) => {
-            match client.set_sample_rate(payload.sample_rate).await {
-                Ok(()) => {
-                    info!("Sample rate set to {} sps", payload.sample_rate);
-                    (StatusCode::OK, Json(serde_json::json!({
+        Some(client) => match client.set_sample_rate(payload.sample_rate).await {
+            Ok(()) => {
+                info!("Sample rate set to {} sps", payload.sample_rate);
+                (
+                    StatusCode::OK,
+                    Json(serde_json::json!({
                         "success": true,
                         "message": format!("Sample rate set to {} sps", payload.sample_rate),
                         "sampleRate": payload.sample_rate
-                    }))).into_response()
-                }
-                Err(e) => {
-                    error!("Failed to set sample rate: {}", e);
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(ErrorResponse {
-                            error: format!("Failed to set sample rate: {}", e),
-                            code: Some("SAMPLE_RATE_ERROR".to_string()),
-                            timestamp: chrono::Utc::now(),
-                        }),
-                    )
-                        .into_response()
-                }
+                    })),
+                )
+                    .into_response()
             }
-        }
+            Err(e) => {
+                error!("Failed to set sample rate: {}", e);
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        error: format!("Failed to set sample rate: {}", e),
+                        code: Some("SAMPLE_RATE_ERROR".to_string()),
+                        timestamp: chrono::Utc::now(),
+                    }),
+                )
+                    .into_response()
+            }
+        },
         None => handle_no_device().await.into_response(),
     }
 }
@@ -106,31 +110,29 @@ pub async fn set_baud_rate(
         None => return handle_no_device().await.into_response(),
     };
     match &*client_guard {
-        Some(client) => {
-            match client.set_baud_rate(payload.baud_rate).await {
-                Ok(()) => {
-                    info!("Baud rate set to {} bps", payload.baud_rate);
-                    (StatusCode::OK, Json(serde_json::json!({
+        Some(client) => match client.set_baud_rate(payload.baud_rate).await {
+            Ok(()) => {
+                info!("Baud rate set to {} bps", payload.baud_rate);
+                (StatusCode::OK, Json(serde_json::json!({
                         "success": true,
                         "message": format!("Baud rate set to {} bps. Power cycle the sensor to take effect.", payload.baud_rate),
                         "baudRate": payload.baud_rate,
                         "powerCycleRequired": true
                     }))).into_response()
-                }
-                Err(e) => {
-                    error!("Failed to set baud rate: {}", e);
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(ErrorResponse {
-                            error: format!("Failed to set baud rate: {}", e),
-                            code: Some("BAUD_RATE_ERROR".to_string()),
-                            timestamp: chrono::Utc::now(),
-                        }),
-                    )
-                        .into_response()
-                }
             }
-        }
+            Err(e) => {
+                error!("Failed to set baud rate: {}", e);
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        error: format!("Failed to set baud rate: {}", e),
+                        code: Some("BAUD_RATE_ERROR".to_string()),
+                        timestamp: chrono::Utc::now(),
+                    }),
+                )
+                    .into_response()
+            }
+        },
         None => handle_no_device().await.into_response(),
     }
 }
@@ -145,30 +147,35 @@ pub async fn set_high_pass_filter(
         None => return handle_no_device().await.into_response(),
     };
     match &*client_guard {
-        Some(client) => {
-            match client.set_high_pass_filter(payload.enabled).await {
-                Ok(()) => {
-                    info!("High pass filter: {}", if payload.enabled { "enabled" } else { "disabled" });
-                    (StatusCode::OK, Json(serde_json::json!({
+        Some(client) => match client.set_high_pass_filter(payload.enabled).await {
+            Ok(()) => {
+                info!(
+                    "High pass filter: {}",
+                    if payload.enabled {
+                        "enabled"
+                    } else {
+                        "disabled"
+                    }
+                );
+                (StatusCode::OK, Json(serde_json::json!({
                         "success": true,
                         "message": format!("High pass filter {}", if payload.enabled { "enabled" } else { "disabled" }),
                         "enabled": payload.enabled
                     }))).into_response()
-                }
-                Err(e) => {
-                    error!("Failed to set high pass filter: {}", e);
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(ErrorResponse {
-                            error: format!("Failed to set high pass filter: {}", e),
-                            code: Some("HIGH_PASS_FILTER_ERROR".to_string()),
-                            timestamp: chrono::Utc::now(),
-                        }),
-                    )
-                        .into_response()
-                }
             }
-        }
+            Err(e) => {
+                error!("Failed to set high pass filter: {}", e);
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        error: format!("Failed to set high pass filter: {}", e),
+                        code: Some("HIGH_PASS_FILTER_ERROR".to_string()),
+                        timestamp: chrono::Utc::now(),
+                    }),
+                )
+                    .into_response()
+            }
+        },
         None => handle_no_device().await.into_response(),
     }
 }
@@ -225,7 +232,9 @@ pub async fn set_stream_size(
 
 /// Helper function to read current configuration
 async fn read_current_config(state: &AppState) -> anyhow::Result<ConfigResponse> {
-    let client_arc = state.modbus_clients.first()
+    let client_arc = state
+        .modbus_clients
+        .first()
         .ok_or_else(|| anyhow::anyhow!("No sensors configured"))?;
     let client_guard = client_arc.read().await;
     match &*client_guard {
@@ -238,9 +247,14 @@ async fn read_current_config(state: &AppState) -> anyhow::Result<ConfigResponse>
             // so we'll use default/configured values
             Ok(ConfigResponse {
                 sample_rate: 7812, // Default for I-type sensors
-                baud_rate: state.config.sensors.first().map(|s| s.baud_rate).unwrap_or(115200),
+                baud_rate: state
+                    .config
+                    .sensors
+                    .first()
+                    .map(|s| s.baud_rate)
+                    .unwrap_or(115200),
                 high_pass_filter: false, // Default state
-                stream_size: 123, // Maximum
+                stream_size: 123,        // Maximum
                 temperature,
                 firmware_version,
                 ucid,

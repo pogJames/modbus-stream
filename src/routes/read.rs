@@ -6,7 +6,7 @@ use axum::{
 use serde::Deserialize;
 use tracing::error;
 
-use crate::{types::ErrorResponse, AppState};
+use crate::{AppState, types::ErrorResponse};
 
 /// Get latest raw data for all sensors combined
 pub async fn get_latest_raw_combined(State(state): State<AppState>) -> impl IntoResponse {
@@ -36,7 +36,8 @@ macro_rules! resolve_client {
                     code: Some("UNKNOWN_SENSOR".to_string()),
                     timestamp: chrono::Utc::now(),
                 }),
-            ).into_response();
+            )
+                .into_response();
         }
         &$state.modbus_clients[_idx]
     }};
@@ -61,56 +62,49 @@ pub async fn get_temperature(
 ) -> impl IntoResponse {
     let client_guard = resolve_client!(sensor, state).read().await;
     match &*client_guard {
-        Some(client) => {
-            match client.read_temperature().await {
-                Ok(temperature) => Json(serde_json::json!({
-                    "temperature": temperature,
-                    "unit": "°C",
-                    "timestamp": chrono::Utc::now()
-                }))
-                .into_response(),
-                Err(e) => {
-                    error!("Failed to read temperature: {}", e);
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(ErrorResponse {
-                            error: format!("Failed to read temperature: {}", e),
-                            code: Some("TEMPERATURE_READ_ERROR".to_string()),
-                            timestamp: chrono::Utc::now(),
-                        }),
-                    )
-                        .into_response()
-                }
+        Some(client) => match client.read_temperature().await {
+            Ok(temperature) => Json(serde_json::json!({
+                "temperature": temperature,
+                "unit": "°C",
+                "timestamp": chrono::Utc::now()
+            }))
+            .into_response(),
+            Err(e) => {
+                error!("Failed to read temperature: {}", e);
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        error: format!("Failed to read temperature: {}", e),
+                        code: Some("TEMPERATURE_READ_ERROR".to_string()),
+                        timestamp: chrono::Utc::now(),
+                    }),
+                )
+                    .into_response()
             }
-        }
+        },
         None => handle_no_device().await.into_response(),
     }
 }
 
 /// Get UCID information
-pub async fn get_ucid(
-    Path(sensor): Path<u8>,
-    State(state): State<AppState>,
-) -> impl IntoResponse {
+pub async fn get_ucid(Path(sensor): Path<u8>, State(state): State<AppState>) -> impl IntoResponse {
     let client_guard = resolve_client!(sensor, state).read().await;
     match &*client_guard {
-        Some(client) => {
-            match client.read_ucid().await {
-                Ok(ucid) => Json(ucid).into_response(),
-                Err(e) => {
-                    error!("Failed to read UCID: {}", e);
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(ErrorResponse {
-                            error: format!("Failed to read UCID: {}", e),
-                            code: Some("UCID_READ_ERROR".to_string()),
-                            timestamp: chrono::Utc::now(),
-                        }),
-                    )
-                        .into_response()
-                }
+        Some(client) => match client.read_ucid().await {
+            Ok(ucid) => Json(ucid).into_response(),
+            Err(e) => {
+                error!("Failed to read UCID: {}", e);
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        error: format!("Failed to read UCID: {}", e),
+                        code: Some("UCID_READ_ERROR".to_string()),
+                        timestamp: chrono::Utc::now(),
+                    }),
+                )
+                    .into_response()
             }
-        }
+        },
         None => handle_no_device().await.into_response(),
     }
 }
@@ -122,27 +116,25 @@ pub async fn get_firmware_version(
 ) -> impl IntoResponse {
     let client_guard = resolve_client!(sensor, state).read().await;
     match &*client_guard {
-        Some(client) => {
-            match client.read_firmware_version().await {
-                Ok(version) => Json(serde_json::json!({
-                    "firmwareVersion": version,
-                    "timestamp": chrono::Utc::now()
-                }))
-                .into_response(),
-                Err(e) => {
-                    error!("Failed to read firmware version: {}", e);
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(ErrorResponse {
-                            error: format!("Failed to read firmware version: {}", e),
-                            code: Some("FIRMWARE_VERSION_READ_ERROR".to_string()),
-                            timestamp: chrono::Utc::now(),
-                        }),
-                    )
-                        .into_response()
-                }
+        Some(client) => match client.read_firmware_version().await {
+            Ok(version) => Json(serde_json::json!({
+                "firmwareVersion": version,
+                "timestamp": chrono::Utc::now()
+            }))
+            .into_response(),
+            Err(e) => {
+                error!("Failed to read firmware version: {}", e);
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        error: format!("Failed to read firmware version: {}", e),
+                        code: Some("FIRMWARE_VERSION_READ_ERROR".to_string()),
+                        timestamp: chrono::Utc::now(),
+                    }),
+                )
+                    .into_response()
             }
-        }
+        },
         None => handle_no_device().await.into_response(),
     }
 }
@@ -154,27 +146,25 @@ pub async fn get_chip_id(
 ) -> impl IntoResponse {
     let client_guard = resolve_client!(sensor, state).read().await;
     match &*client_guard {
-        Some(client) => {
-            match client.read_chip_id().await {
-                Ok(chip_id) => Json(serde_json::json!({
-                    "chipId": chip_id,
-                    "timestamp": chrono::Utc::now()
-                }))
-                .into_response(),
-                Err(e) => {
-                    error!("Failed to read chip ID: {}", e);
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(ErrorResponse {
-                            error: format!("Failed to read chip ID: {}", e),
-                            code: Some("CHIP_ID_READ_ERROR".to_string()),
-                            timestamp: chrono::Utc::now(),
-                        }),
-                    )
-                        .into_response()
-                }
+        Some(client) => match client.read_chip_id().await {
+            Ok(chip_id) => Json(serde_json::json!({
+                "chipId": chip_id,
+                "timestamp": chrono::Utc::now()
+            }))
+            .into_response(),
+            Err(e) => {
+                error!("Failed to read chip ID: {}", e);
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        error: format!("Failed to read chip ID: {}", e),
+                        code: Some("CHIP_ID_READ_ERROR".to_string()),
+                        timestamp: chrono::Utc::now(),
+                    }),
+                )
+                    .into_response()
             }
-        }
+        },
         None => handle_no_device().await.into_response(),
     }
 }
@@ -186,27 +176,25 @@ pub async fn get_fifo_buffer_size(
 ) -> impl IntoResponse {
     let client_guard = resolve_client!(sensor, state).read().await;
     match &*client_guard {
-        Some(client) => {
-            match client.read_fifo_buffer_size().await {
-                Ok(size) => Json(serde_json::json!({
-                    "fifoBufferSize": size,
-                    "timestamp": chrono::Utc::now()
-                }))
-                .into_response(),
-                Err(e) => {
-                    error!("Failed to read FIFO buffer size: {}", e);
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(ErrorResponse {
-                            error: format!("Failed to read FIFO buffer size: {}", e),
-                            code: Some("FIFO_BUFFER_SIZE_READ_ERROR".to_string()),
-                            timestamp: chrono::Utc::now(),
-                        }),
-                    )
-                        .into_response()
-                }
+        Some(client) => match client.read_fifo_buffer_size().await {
+            Ok(size) => Json(serde_json::json!({
+                "fifoBufferSize": size,
+                "timestamp": chrono::Utc::now()
+            }))
+            .into_response(),
+            Err(e) => {
+                error!("Failed to read FIFO buffer size: {}", e);
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        error: format!("Failed to read FIFO buffer size: {}", e),
+                        code: Some("FIFO_BUFFER_SIZE_READ_ERROR".to_string()),
+                        timestamp: chrono::Utc::now(),
+                    }),
+                )
+                    .into_response()
             }
-        }
+        },
         None => handle_no_device().await.into_response(),
     }
 }
@@ -218,23 +206,21 @@ pub async fn get_latest_raw(
 ) -> impl IntoResponse {
     let client_guard = resolve_client!(sensor, state).read().await;
     match &*client_guard {
-        Some(client) => {
-            match client.read_latest_raw().await {
-                Ok(data) => Json(data).into_response(),
-                Err(e) => {
-                    error!("Failed to read latest raw data: {}", e);
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(ErrorResponse {
-                            error: format!("Failed to read latest raw data: {}", e),
-                            code: Some("LATEST_RAW_READ_ERROR".to_string()),
-                            timestamp: chrono::Utc::now(),
-                        }),
-                    )
-                        .into_response()
-                }
+        Some(client) => match client.read_latest_raw().await {
+            Ok(data) => Json(data).into_response(),
+            Err(e) => {
+                error!("Failed to read latest raw data: {}", e);
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        error: format!("Failed to read latest raw data: {}", e),
+                        code: Some("LATEST_RAW_READ_ERROR".to_string()),
+                        timestamp: chrono::Utc::now(),
+                    }),
+                )
+                    .into_response()
             }
-        }
+        },
         None => handle_no_device().await.into_response(),
     }
 }
@@ -246,28 +232,26 @@ pub async fn get_gravity_rms(
 ) -> impl IntoResponse {
     let client_guard = resolve_client!(sensor, state).read().await;
     match &*client_guard {
-        Some(client) => {
-            match client.read_gravity_rms().await {
-                Ok(rms) => Json(serde_json::json!({
-                    "rms": rms,
-                    "unit": "g",
-                    "timestamp": chrono::Utc::now()
-                }))
-                .into_response(),
-                Err(e) => {
-                    error!("Failed to read gravity RMS: {}", e);
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(ErrorResponse {
-                            error: format!("Failed to read gravity RMS: {}", e),
-                            code: Some("GRAVITY_RMS_READ_ERROR".to_string()),
-                            timestamp: chrono::Utc::now(),
-                        }),
-                    )
-                        .into_response()
-                }
+        Some(client) => match client.read_gravity_rms().await {
+            Ok(rms) => Json(serde_json::json!({
+                "rms": rms,
+                "unit": "g",
+                "timestamp": chrono::Utc::now()
+            }))
+            .into_response(),
+            Err(e) => {
+                error!("Failed to read gravity RMS: {}", e);
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        error: format!("Failed to read gravity RMS: {}", e),
+                        code: Some("GRAVITY_RMS_READ_ERROR".to_string()),
+                        timestamp: chrono::Utc::now(),
+                    }),
+                )
+                    .into_response()
             }
-        }
+        },
         None => handle_no_device().await.into_response(),
     }
 }
@@ -279,28 +263,26 @@ pub async fn get_gravity_peak(
 ) -> impl IntoResponse {
     let client_guard = resolve_client!(sensor, state).read().await;
     match &*client_guard {
-        Some(client) => {
-            match client.read_gravity_peak().await {
-                Ok(peak) => Json(serde_json::json!({
-                    "peak": peak,
-                    "unit": "g",
-                    "timestamp": chrono::Utc::now()
-                }))
-                .into_response(),
-                Err(e) => {
-                    error!("Failed to read gravity peak: {}", e);
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(ErrorResponse {
-                            error: format!("Failed to read gravity peak: {}", e),
-                            code: Some("GRAVITY_PEAK_READ_ERROR".to_string()),
-                            timestamp: chrono::Utc::now(),
-                        }),
-                    )
-                        .into_response()
-                }
+        Some(client) => match client.read_gravity_peak().await {
+            Ok(peak) => Json(serde_json::json!({
+                "peak": peak,
+                "unit": "g",
+                "timestamp": chrono::Utc::now()
+            }))
+            .into_response(),
+            Err(e) => {
+                error!("Failed to read gravity peak: {}", e);
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        error: format!("Failed to read gravity peak: {}", e),
+                        code: Some("GRAVITY_PEAK_READ_ERROR".to_string()),
+                        timestamp: chrono::Utc::now(),
+                    }),
+                )
+                    .into_response()
             }
-        }
+        },
         None => handle_no_device().await.into_response(),
     }
 }
@@ -312,28 +294,26 @@ pub async fn get_gravity_crest_factor(
 ) -> impl IntoResponse {
     let client_guard = resolve_client!(sensor, state).read().await;
     match &*client_guard {
-        Some(client) => {
-            match client.read_gravity_crest_factor().await {
-                Ok(crest_factor) => Json(serde_json::json!({
-                    "crestFactor": crest_factor,
-                    "unit": "g",
-                    "timestamp": chrono::Utc::now()
-                }))
-                .into_response(),
-                Err(e) => {
-                    error!("Failed to read gravity crest factor: {}", e);
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(ErrorResponse {
-                            error: format!("Failed to read gravity crest factor: {}", e),
-                            code: Some("GRAVITY_CREST_FACTOR_READ_ERROR".to_string()),
-                            timestamp: chrono::Utc::now(),
-                        }),
-                    )
-                        .into_response()
-                }
+        Some(client) => match client.read_gravity_crest_factor().await {
+            Ok(crest_factor) => Json(serde_json::json!({
+                "crestFactor": crest_factor,
+                "unit": "g",
+                "timestamp": chrono::Utc::now()
+            }))
+            .into_response(),
+            Err(e) => {
+                error!("Failed to read gravity crest factor: {}", e);
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        error: format!("Failed to read gravity crest factor: {}", e),
+                        code: Some("GRAVITY_CREST_FACTOR_READ_ERROR".to_string()),
+                        timestamp: chrono::Utc::now(),
+                    }),
+                )
+                    .into_response()
             }
-        }
+        },
         None => handle_no_device().await.into_response(),
     }
 }
@@ -345,28 +325,26 @@ pub async fn get_gravity_skewness(
 ) -> impl IntoResponse {
     let client_guard = resolve_client!(sensor, state).read().await;
     match &*client_guard {
-        Some(client) => {
-            match client.read_gravity_skewness().await {
-                Ok(skewness) => Json(serde_json::json!({
-                    "skewness": skewness,
-                    "unit": "g",
-                    "timestamp": chrono::Utc::now()
-                }))
-                .into_response(),
-                Err(e) => {
-                    error!("Failed to read gravity skewness: {}", e);
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(ErrorResponse {
-                            error: format!("Failed to read gravity skewness: {}", e),
-                            code: Some("GRAVITY_SKEWNESS_READ_ERROR".to_string()),
-                            timestamp: chrono::Utc::now(),
-                        }),
-                    )
-                        .into_response()
-                }
+        Some(client) => match client.read_gravity_skewness().await {
+            Ok(skewness) => Json(serde_json::json!({
+                "skewness": skewness,
+                "unit": "g",
+                "timestamp": chrono::Utc::now()
+            }))
+            .into_response(),
+            Err(e) => {
+                error!("Failed to read gravity skewness: {}", e);
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        error: format!("Failed to read gravity skewness: {}", e),
+                        code: Some("GRAVITY_SKEWNESS_READ_ERROR".to_string()),
+                        timestamp: chrono::Utc::now(),
+                    }),
+                )
+                    .into_response()
             }
-        }
+        },
         None => handle_no_device().await.into_response(),
     }
 }
@@ -378,28 +356,26 @@ pub async fn get_gravity_kurtosis(
 ) -> impl IntoResponse {
     let client_guard = resolve_client!(sensor, state).read().await;
     match &*client_guard {
-        Some(client) => {
-            match client.read_gravity_kurtosis().await {
-                Ok(kurtosis) => Json(serde_json::json!({
-                    "kurtosis": kurtosis,
-                    "unit": "g",
-                    "timestamp": chrono::Utc::now()
-                }))
-                .into_response(),
-                Err(e) => {
-                    error!("Failed to read gravity kurtosis: {}", e);
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(ErrorResponse {
-                            error: format!("Failed to read gravity kurtosis: {}", e),
-                            code: Some("GRAVITY_KURTOSIS_READ_ERROR".to_string()),
-                            timestamp: chrono::Utc::now(),
-                        }),
-                    )
-                        .into_response()
-                }
+        Some(client) => match client.read_gravity_kurtosis().await {
+            Ok(kurtosis) => Json(serde_json::json!({
+                "kurtosis": kurtosis,
+                "unit": "g",
+                "timestamp": chrono::Utc::now()
+            }))
+            .into_response(),
+            Err(e) => {
+                error!("Failed to read gravity kurtosis: {}", e);
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        error: format!("Failed to read gravity kurtosis: {}", e),
+                        code: Some("GRAVITY_KURTOSIS_READ_ERROR".to_string()),
+                        timestamp: chrono::Utc::now(),
+                    }),
+                )
+                    .into_response()
             }
-        }
+        },
         None => handle_no_device().await.into_response(),
     }
 }
@@ -411,28 +387,26 @@ pub async fn get_gravity_primary_frequency(
 ) -> impl IntoResponse {
     let client_guard = resolve_client!(sensor, state).read().await;
     match &*client_guard {
-        Some(client) => {
-            match client.read_gravity_primary_frequency().await {
-                Ok(frequency) => Json(serde_json::json!({
-                    "primaryFrequency": frequency,
-                    "unit": "Hz",
-                    "timestamp": chrono::Utc::now()
-                }))
-                .into_response(),
-                Err(e) => {
-                    error!("Failed to read gravity primary frequency: {}", e);
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(ErrorResponse {
-                            error: format!("Failed to read gravity primary frequency: {}", e),
-                            code: Some("GRAVITY_PRIMARY_FREQUENCY_READ_ERROR".to_string()),
-                            timestamp: chrono::Utc::now(),
-                        }),
-                    )
-                        .into_response()
-                }
+        Some(client) => match client.read_gravity_primary_frequency().await {
+            Ok(frequency) => Json(serde_json::json!({
+                "primaryFrequency": frequency,
+                "unit": "Hz",
+                "timestamp": chrono::Utc::now()
+            }))
+            .into_response(),
+            Err(e) => {
+                error!("Failed to read gravity primary frequency: {}", e);
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        error: format!("Failed to read gravity primary frequency: {}", e),
+                        code: Some("GRAVITY_PRIMARY_FREQUENCY_READ_ERROR".to_string()),
+                        timestamp: chrono::Utc::now(),
+                    }),
+                )
+                    .into_response()
             }
-        }
+        },
         None => handle_no_device().await.into_response(),
     }
 }
@@ -444,28 +418,26 @@ pub async fn get_velocity_rms(
 ) -> impl IntoResponse {
     let client_guard = resolve_client!(sensor, state).read().await;
     match &*client_guard {
-        Some(client) => {
-            match client.read_velocity_rms().await {
-                Ok(rms) => Json(serde_json::json!({
-                    "rms": rms,
-                    "unit": "mm/s",
-                    "timestamp": chrono::Utc::now()
-                }))
-                .into_response(),
-                Err(e) => {
-                    error!("Failed to read velocity RMS: {}", e);
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(ErrorResponse {
-                            error: format!("Failed to read velocity RMS: {}", e),
-                            code: Some("VELOCITY_RMS_READ_ERROR".to_string()),
-                            timestamp: chrono::Utc::now(),
-                        }),
-                    )
-                        .into_response()
-                }
+        Some(client) => match client.read_velocity_rms().await {
+            Ok(rms) => Json(serde_json::json!({
+                "rms": rms,
+                "unit": "mm/s",
+                "timestamp": chrono::Utc::now()
+            }))
+            .into_response(),
+            Err(e) => {
+                error!("Failed to read velocity RMS: {}", e);
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        error: format!("Failed to read velocity RMS: {}", e),
+                        code: Some("VELOCITY_RMS_READ_ERROR".to_string()),
+                        timestamp: chrono::Utc::now(),
+                    }),
+                )
+                    .into_response()
             }
-        }
+        },
         None => handle_no_device().await.into_response(),
     }
 }
@@ -477,28 +449,26 @@ pub async fn get_velocity_peak(
 ) -> impl IntoResponse {
     let client_guard = resolve_client!(sensor, state).read().await;
     match &*client_guard {
-        Some(client) => {
-            match client.read_velocity_peak().await {
-                Ok(peak) => Json(serde_json::json!({
-                    "peak": peak,
-                    "unit": "mm/s",
-                    "timestamp": chrono::Utc::now()
-                }))
-                .into_response(),
-                Err(e) => {
-                    error!("Failed to read velocity peak: {}", e);
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(ErrorResponse {
-                            error: format!("Failed to read velocity peak: {}", e),
-                            code: Some("VELOCITY_PEAK_READ_ERROR".to_string()),
-                            timestamp: chrono::Utc::now(),
-                        }),
-                    )
-                        .into_response()
-                }
+        Some(client) => match client.read_velocity_peak().await {
+            Ok(peak) => Json(serde_json::json!({
+                "peak": peak,
+                "unit": "mm/s",
+                "timestamp": chrono::Utc::now()
+            }))
+            .into_response(),
+            Err(e) => {
+                error!("Failed to read velocity peak: {}", e);
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        error: format!("Failed to read velocity peak: {}", e),
+                        code: Some("VELOCITY_PEAK_READ_ERROR".to_string()),
+                        timestamp: chrono::Utc::now(),
+                    }),
+                )
+                    .into_response()
             }
-        }
+        },
         None => handle_no_device().await.into_response(),
     }
 }
@@ -510,28 +480,26 @@ pub async fn get_velocity_crest_factor(
 ) -> impl IntoResponse {
     let client_guard = resolve_client!(sensor, state).read().await;
     match &*client_guard {
-        Some(client) => {
-            match client.read_velocity_crest_factor().await {
-                Ok(crest_factor) => Json(serde_json::json!({
-                    "crestFactor": crest_factor,
-                    "unit": "mm/s",
-                    "timestamp": chrono::Utc::now()
-                }))
-                .into_response(),
-                Err(e) => {
-                    error!("Failed to read velocity crest factor: {}", e);
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(ErrorResponse {
-                            error: format!("Failed to read velocity crest factor: {}", e),
-                            code: Some("VELOCITY_CREST_FACTOR_READ_ERROR".to_string()),
-                            timestamp: chrono::Utc::now(),
-                        }),
-                    )
-                        .into_response()
-                }
+        Some(client) => match client.read_velocity_crest_factor().await {
+            Ok(crest_factor) => Json(serde_json::json!({
+                "crestFactor": crest_factor,
+                "unit": "mm/s",
+                "timestamp": chrono::Utc::now()
+            }))
+            .into_response(),
+            Err(e) => {
+                error!("Failed to read velocity crest factor: {}", e);
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        error: format!("Failed to read velocity crest factor: {}", e),
+                        code: Some("VELOCITY_CREST_FACTOR_READ_ERROR".to_string()),
+                        timestamp: chrono::Utc::now(),
+                    }),
+                )
+                    .into_response()
             }
-        }
+        },
         None => handle_no_device().await.into_response(),
     }
 }
@@ -543,28 +511,26 @@ pub async fn get_velocity_primary_frequency(
 ) -> impl IntoResponse {
     let client_guard = resolve_client!(sensor, state).read().await;
     match &*client_guard {
-        Some(client) => {
-            match client.read_velocity_primary_frequency().await {
-                Ok(frequency) => Json(serde_json::json!({
-                    "primaryFrequency": frequency,
-                    "unit": "Hz",
-                    "timestamp": chrono::Utc::now()
-                }))
-                .into_response(),
-                Err(e) => {
-                    error!("Failed to read velocity primary frequency: {}", e);
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(ErrorResponse {
-                            error: format!("Failed to read velocity primary frequency: {}", e),
-                            code: Some("VELOCITY_PRIMARY_FREQUENCY_READ_ERROR".to_string()),
-                            timestamp: chrono::Utc::now(),
-                        }),
-                    )
-                        .into_response()
-                }
+        Some(client) => match client.read_velocity_primary_frequency().await {
+            Ok(frequency) => Json(serde_json::json!({
+                "primaryFrequency": frequency,
+                "unit": "Hz",
+                "timestamp": chrono::Utc::now()
+            }))
+            .into_response(),
+            Err(e) => {
+                error!("Failed to read velocity primary frequency: {}", e);
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        error: format!("Failed to read velocity primary frequency: {}", e),
+                        code: Some("VELOCITY_PRIMARY_FREQUENCY_READ_ERROR".to_string()),
+                        timestamp: chrono::Utc::now(),
+                    }),
+                )
+                    .into_response()
             }
-        }
+        },
         None => handle_no_device().await.into_response(),
     }
 }
@@ -576,23 +542,21 @@ pub async fn get_all_metrics(
 ) -> impl IntoResponse {
     let client_guard = resolve_client!(sensor, state).read().await;
     match &*client_guard {
-        Some(client) => {
-            match client.read_all_metrics().await {
-                Ok(metrics) => Json(metrics).into_response(),
-                Err(e) => {
-                    error!("Failed to read all metrics: {}", e);
-                    (
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(ErrorResponse {
-                            error: format!("Failed to read all metrics: {}", e),
-                            code: Some("ALL_METRICS_READ_ERROR".to_string()),
-                            timestamp: chrono::Utc::now(),
-                        }),
-                    )
-                        .into_response()
-                }
+        Some(client) => match client.read_all_metrics().await {
+            Ok(metrics) => Json(metrics).into_response(),
+            Err(e) => {
+                error!("Failed to read all metrics: {}", e);
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        error: format!("Failed to read all metrics: {}", e),
+                        code: Some("ALL_METRICS_READ_ERROR".to_string()),
+                        timestamp: chrono::Utc::now(),
+                    }),
+                )
+                    .into_response()
             }
-        }
+        },
         None => handle_no_device().await.into_response(),
     }
 }
@@ -611,10 +575,7 @@ pub struct InferQuery {
 /// channels-first) is determined at runtime from `algo_attribute().data_tab`.
 ///
 /// Response: `{ "class": 1–4, "probabilities": [f32; 4] }`
-pub async fn infer_csv(
-    Path(_sensor): Path<u8>,
-    Query(q): Query<InferQuery>,
-) -> impl IntoResponse {
+pub async fn infer_csv(Path(_sensor): Path<u8>, Query(q): Query<InferQuery>) -> impl IntoResponse {
     if !crate::is_safe_csv_filename(&q.file) {
         return (
             StatusCode::BAD_REQUEST,
@@ -653,9 +614,15 @@ pub async fn infer_csv(
             } else {
                 continue;
             };
-            let Ok(x) = x_s.trim().parse::<f32>() else { continue };
-            let Ok(y) = y_s.trim().parse::<f32>() else { continue };
-            let Ok(z) = z_s.trim().parse::<f32>() else { continue };
+            let Ok(x) = x_s.trim().parse::<f32>() else {
+                continue;
+            };
+            let Ok(y) = y_s.trim().parse::<f32>() else {
+                continue;
+            };
+            let Ok(z) = z_s.trim().parse::<f32>() else {
+                continue;
+            };
             xyz.push((x, y, z));
         }
 

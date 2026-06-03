@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Tri-axial acceleration data
@@ -200,10 +200,7 @@ pub enum WebSocketMessage {
         code: Option<String>,
     },
     #[serde(rename = "status")]
-    Status {
-        connected: bool,
-        streaming: bool,
-    },
+    Status { connected: bool, streaming: bool },
 }
 
 /// Error response
@@ -227,7 +224,7 @@ pub mod registers {
     pub const UCID: u16 = 0x001B;
     pub const HIGH_PASS_ENABLE: u16 = 0x001C;
     pub const FIRMWARE_VERSION: u16 = 0x001D;
-    
+
     // Gravity metrics
     pub const GRAVITY_RMS: u16 = 0x001E;
     pub const GRAVITY_PEAK: u16 = 0x001F;
@@ -235,18 +232,18 @@ pub mod registers {
     pub const GRAVITY_SKEWNESS: u16 = 0x0021;
     pub const GRAVITY_KURTOSIS: u16 = 0x0022;
     pub const GRAVITY_PRIMARY_FREQ: u16 = 0x003D;
-    
+
     // Velocity metrics
     pub const VELOCITY_RMS: u16 = 0x0032;
     pub const VELOCITY_PEAK: u16 = 0x0033;
     pub const VELOCITY_CREST_FACTOR: u16 = 0x0034;
     pub const VELOCITY_PRIMARY_FREQ: u16 = 0x003C;
-    
+
     // Latest raw data
     pub const RAW_DATA_LATEST_X: u16 = 0x0083;
     pub const RAW_DATA_LATEST_Y: u16 = 0x0084;
     pub const RAW_DATA_LATEST_Z: u16 = 0x0085;
-    
+
     // Chip ID
     pub const CHIP_ID: u16 = 0x0080;
 }
@@ -332,18 +329,18 @@ impl ValidationErrors {
             general_errors: Vec::new(),
         }
     }
-    
+
     pub fn add_field_error(&mut self, field: &str, error: &str) {
         self.field_errors
             .entry(field.to_string())
             .or_insert_with(Vec::new)
             .push(error.to_string());
     }
-    
+
     pub fn add_general_error(&mut self, error: &str) {
         self.general_errors.push(error.to_string());
     }
-    
+
     pub fn has_errors(&self) -> bool {
         !self.field_errors.is_empty() || !self.general_errors.is_empty()
     }
@@ -351,13 +348,17 @@ impl ValidationErrors {
 
 impl From<&crate::config::AppConfig> for SettingsForm {
     fn from(config: &crate::config::AppConfig) -> Self {
-        let sensors = config.sensors.iter().map(|s| SensorConnectionForm {
-            device: s.device.clone(),
-            baud_rate: s.baud_rate,
-            slave_id: s.slave_id,
-            timeout_ms: s.timeout_ms,
-            retry_attempts: s.retry_attempts,
-        }).collect();
+        let sensors = config
+            .sensors
+            .iter()
+            .map(|s| SensorConnectionForm {
+                device: s.device.clone(),
+                baud_rate: s.baud_rate,
+                slave_id: s.slave_id,
+                timeout_ms: s.timeout_ms,
+                retry_attempts: s.retry_attempts,
+            })
+            .collect();
         Self {
             sensors,
             sample_rate: 7812,
@@ -379,22 +380,24 @@ impl UcidInfo {
 
         let model = match model_bits {
             0 => "12B",
-            1 => "15B", 
+            1 => "15B",
             2 => "KAX301",
             3 => "KAX302",
             4 => "S6S",
             _ => "Unknown",
-        }.to_string();
+        }
+        .to_string();
 
         let gain = match gain_bits {
             0 => "4G",
             1 => "2G",
-            2 => "8G", 
+            2 => "8G",
             3 => "16G",
             4 => "32G",
             5 => "64G",
             _ => "Unknown",
-        }.to_string();
+        }
+        .to_string();
 
         Self {
             model,
@@ -408,13 +411,13 @@ impl UcidInfo {
     /// For a 16-bit signed ADC: counts_per_g = 32768 / full_scale_g
     pub fn scale_factor(&self) -> f64 {
         match self.gain.as_str() {
-            "2G"  => 1.0 / 16384.0,
-            "4G"  => 1.0 / 8192.0,
-            "8G"  => 1.0 / 4096.0,
+            "2G" => 1.0 / 16384.0,
+            "4G" => 1.0 / 8192.0,
+            "8G" => 1.0 / 4096.0,
             "16G" => 1.0 / 2048.0,
             "32G" => 1.0 / 1024.0,
             "64G" => 1.0 / 512.0,
-            _     => 1.0 / 8192.0, // Default to 4G (matches Python's hardcoded turn_gravity=8192)
+            _ => 1.0 / 8192.0, // Default to 4G (matches Python's hardcoded turn_gravity=8192)
         }
     }
 }

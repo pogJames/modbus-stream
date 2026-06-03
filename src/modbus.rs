@@ -7,8 +7,8 @@ use tokio_serial::{SerialPortBuilderExt, SerialStream};
 use tracing::{debug, error, info, warn};
 
 use crate::types::{
-    registers, AccelerationData, AllMetricsResponse, DeviceInfo, GravityMetrics, LatestRawResponse,
-    UcidInfo, VelocityMetrics,
+    AccelerationData, AllMetricsResponse, DeviceInfo, GravityMetrics, LatestRawResponse, UcidInfo,
+    VelocityMetrics, registers,
 };
 
 pub struct ModbusClient {
@@ -88,8 +88,22 @@ impl ModbusClient {
         let result = context
             .read_input_registers(address, count)
             .await
-            .map_err(|e| anyhow::anyhow!("IO error reading input registers at address 0x{:04X}, count {}: {}", address, count, e))?
-            .map_err(|e| anyhow::anyhow!("Modbus exception reading input registers at address 0x{:04X}, count {}: {:?}", address, count, e))?;
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "IO error reading input registers at address 0x{:04X}, count {}: {}",
+                    address,
+                    count,
+                    e
+                )
+            })?
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "Modbus exception reading input registers at address 0x{:04X}, count {}: {:?}",
+                    address,
+                    count,
+                    e
+                )
+            })?;
         debug!(
             "Read input registers 0x{:04X}+{}: {:?}",
             address, count, result
@@ -103,7 +117,14 @@ impl ModbusClient {
         context
             .write_single_register(address, value)
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to write register at address 0x{:04X} with value 0x{:04X}: {}", address, value, e))?;
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "Failed to write register at address 0x{:04X} with value 0x{:04X}: {}",
+                    address,
+                    value,
+                    e
+                )
+            })?;
         debug!("Wrote register 0x{:04X} = 0x{:04X}", address, value);
         Ok(())
     }
@@ -138,7 +159,10 @@ impl ModbusClient {
         let value = if enabled { 1 } else { 0 };
         self.write_single_register(registers::HIGH_PASS_ENABLE, value)
             .await?;
-        info!("High pass filter: {}", if enabled { "enabled" } else { "disabled" });
+        info!(
+            "High pass filter: {}",
+            if enabled { "enabled" } else { "disabled" }
+        );
         Ok(())
     }
 
@@ -155,7 +179,9 @@ impl ModbusClient {
 
     /// Read temperature
     pub async fn read_sample_rate(&self) -> Result<u16> {
-        let data = self.read_holding_registers(registers::SAMPLE_RATE, 1).await?;
+        let data = self
+            .read_holding_registers(registers::SAMPLE_RATE, 1)
+            .await?;
         Ok(data[0])
     }
 
@@ -170,7 +196,8 @@ impl ModbusClient {
 
     /// Read UCID information
     pub async fn read_ucid(&self) -> Result<UcidInfo> {
-        let data = self.read_holding_registers(registers::UCID, 2)
+        let data = self
+            .read_holding_registers(registers::UCID, 2)
             .await
             .with_context(|| "Failed to read UCID registers")?;
 
@@ -201,7 +228,10 @@ impl ModbusClient {
                 factor
             }
             Err(e) => {
-                warn!("Failed to read UCID for scale factor, using default 4G: {}", e);
+                warn!(
+                    "Failed to read UCID for scale factor, using default 4G: {}",
+                    e
+                );
                 1.0 / 8192.0 // Default to 4G (32768 / 4 = 8192 counts/g)
             }
         };
@@ -221,10 +251,16 @@ impl ModbusClient {
 
     /// Read firmware version — returns "n/a" if the register is not supported by this sensor
     pub async fn read_firmware_version(&self) -> Result<String> {
-        let data = match self.read_holding_registers(registers::FIRMWARE_VERSION, 1).await {
-            Ok(d)  => d,
+        let data = match self
+            .read_holding_registers(registers::FIRMWARE_VERSION, 1)
+            .await
+        {
+            Ok(d) => d,
             Err(e) => {
-                debug!("Firmware version register unsupported on this sensor: {}", e);
+                debug!(
+                    "Firmware version register unsupported on this sensor: {}",
+                    e
+                );
                 return Ok("n/a".to_string());
             }
         };
@@ -235,14 +271,15 @@ impl ModbusClient {
 
     /// Read chip ID
     pub async fn read_chip_id(&self) -> Result<Vec<u16>> {
-        let data = self.read_input_registers(registers::CHIP_ID, 3)
+        let data = self
+            .read_input_registers(registers::CHIP_ID, 3)
             .await
             .with_context(|| "Failed to read chip ID registers")?;
-        
+
         if data.len() != 3 {
             anyhow::bail!("Expected 3 chip ID registers, got {}", data.len());
         }
-        
+
         debug!("Chip ID: {:?}", data);
         Ok(data)
     }
@@ -511,7 +548,10 @@ impl ModbusClient {
             anyhow::bail!("Cannot read more than 123 registers (sensor limitation)");
         }
         if count % 3 != 0 {
-            warn!("Register count {} is not divisible by 3. Some data may be incomplete.", count);
+            warn!(
+                "Register count {} is not divisible by 3. Some data may be incomplete.",
+                count
+            );
         }
 
         let data = self
@@ -535,16 +575,24 @@ impl ModbusClient {
         // Handle remaining registers if count wasn't divisible by 3
         let remainder = data.len() % 3;
         if remainder > 0 {
-            warn!("Discarded {} incomplete register(s) at end of buffer", remainder);
+            warn!(
+                "Discarded {} incomplete register(s) at end of buffer",
+                remainder
+            );
         }
 
-        debug!("Read {} complete raw data samples from {} registers", result.len(), data.len());
+        debug!(
+            "Read {} complete raw data samples from {} registers",
+            result.len(),
+            data.len()
+        );
         Ok(result)
     }
 
     /// Test connection by reading a known register
     pub async fn test_connection(&self) -> Result<()> {
-        self.read_temperature().await
+        self.read_temperature()
+            .await
             .map(|_| {
                 debug!("Connection test successful");
             })
